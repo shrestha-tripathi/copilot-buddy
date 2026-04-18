@@ -155,6 +155,29 @@ func (s *CopilotService) SendMessageBackground(
 	return buf
 }
 
+// RespondToElicitation forwards the user's modal response to the
+// blocked SDK ElicitationHandler for the given session.
+func (s *CopilotService) RespondToElicitation(sessionID, requestID string, res copilot.ElicitationResult) error {
+	s.mu.RLock()
+	c := s.clients[sessionID]
+	s.mu.RUnlock()
+	if c == nil {
+		return fmt.Errorf("no active client for session %s", sessionID)
+	}
+	return c.Pending.ResolveElicitation(requestID, res)
+}
+
+// RespondToUserInput forwards the user's `ask_user` modal response.
+func (s *CopilotService) RespondToUserInput(sessionID, requestID string, res copilot.UserInputResponse) error {
+	s.mu.RLock()
+	c := s.clients[sessionID]
+	s.mu.RUnlock()
+	if c == nil {
+		return fmt.Errorf("no active client for session %s", sessionID)
+	}
+	return c.Pending.ResolveUserInput(requestID, res)
+}
+
 // gcLoop reaps clients whose LastActivity is older than idleTTL.
 func (s *CopilotService) gcLoop(ctx context.Context) {
 	t := time.NewTicker(time.Minute)

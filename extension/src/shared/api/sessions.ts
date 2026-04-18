@@ -56,4 +56,22 @@ export const sessionsApi = {
     api.request<ResponseStatus>(`/api/sessions/${id}/response-status`),
   models: (api: Api) =>
     api.request<{ models: Array<{ id: string; name?: string }> }>("/api/models"),
+  respondElicitation: (
+    api: Api,
+    id: string,
+    body: { request_id: string; action: "accept" | "decline" | "cancel"; content?: Record<string, unknown> },
+  ) =>
+    api.request<{ ok: boolean }>(`/api/sessions/${id}/elicitation-response`, {
+      method: "POST",
+      body,
+    }),
+  respondUserInput: (
+    api: Api,
+    id: string,
+    body: { request_id: string; answer: string; was_freeform: boolean },
+  ) =>
+    api.request<{ ok: boolean }>(`/api/sessions/${id}/user-input-response`, {
+      method: "POST",
+      body,
+    }),
 };

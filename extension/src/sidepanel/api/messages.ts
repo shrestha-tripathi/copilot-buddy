@@ -65,9 +65,32 @@ function buildEventDispatcher(
         chat.setStreaming(sessionId, false);
         opts.onError?.(String(d.error ?? "unknown error"));
         break;
+      case SSE_EVENTS.ELICITATION:
+        if (typeof d.request_id === "string") {
+          chat.setPendingElicitation(sessionId, {
+            requestId: d.request_id,
+            message: typeof d.message === "string" ? d.message : "",
+            requestedSchema:
+              (d.requested_schema as Record<string, unknown> | undefined) ?? null,
+            mode: typeof d.mode === "string" ? d.mode : undefined,
+            source:
+              typeof d.elicitation_source === "string" ? d.elicitation_source : undefined,
+            url: typeof d.url === "string" ? d.url : undefined,
+          });
+        }
+        break;
+      case SSE_EVENTS.ASK_USER:
+        if (typeof d.request_id === "string") {
+          chat.setPendingAskUser(sessionId, {
+            requestId: d.request_id,
+            question: typeof d.question === "string" ? d.question : "",
+            choices: Array.isArray(d.choices) ? (d.choices as string[]) : [],
+            allowFreeform: d.allow_freeform !== false,
+          });
+        }
+        break;
       default:
-        // mode_changed, elicitation, ask_user, pending_messages — ignored
-        // for now; wired up by p5-ext-elicitation in a follow-up commit.
+        // mode_changed, pending_messages — currently unused.
         break;
     }
   };

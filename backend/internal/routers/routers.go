@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	copilot "github.com/github/copilot-sdk/go"
 	"github.com/sanchar10/copilot-buddy/backend/internal/config"
 	"github.com/sanchar10/copilot-buddy/backend/internal/models"
 	"github.com/sanchar10/copilot-buddy/backend/internal/server/sse"
@@ -36,6 +37,8 @@ func Register(mux *http.ServeMux, svc *services.CopilotService, store *storage.S
 	mux.HandleFunc("POST "+config.APIPrefix+"/sessions/{id}/messages", r.sendMessage)
 	mux.HandleFunc("GET "+config.APIPrefix+"/sessions/{id}/response-stream", r.responseStream)
 	mux.HandleFunc("GET "+config.APIPrefix+"/sessions/{id}/response-status", r.responseStatus)
+	mux.HandleFunc("POST "+config.APIPrefix+"/sessions/{id}/elicitation-response", r.elicitationResponse)
+	mux.HandleFunc("POST "+config.APIPrefix+"/sessions/{id}/user-input-response", r.userInputResponse)
 }
 
 type router struct {
@@ -207,6 +210,55 @@ func (r *router) responseStatus(w http.ResponseWriter, req *http.Request) {
 		"completed_at":   completedAt,
 		"content_length": buf.ContentLength(),
 	})
+}
+
+// elicitationResponse delivers the user's modal answer to the SDK
+// handler that's blocked inside an active turn.
+func (r *router) elicitationResponse(w http.ResponseWriter, req *http.Request) {
+	id := req.PathValue("id")
+	var body struct {
+		RequestID string         `json:"request_id"`
+		Action    string         `json:"action"`
+		Content   map[string]any `json:"content"`
+	}
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if body.RequestID == "" || body.Action == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("request_id and action required"))
+		return
+	}
+	res := copilot.ElicitationResult{Action: body.Action, Content: body.Content}
+	if err := r.svc.RespondToElicitation(id, body.RequestID, res); err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// userInputResponse delivers the user's `ask_user` modal answer.
+func (r *router) userInputResponse(w http.ResponseWriter, req *http.Request) {
+	id := req.PathValue("id")
+	var body struct {
+		RequestID   string `json:"request_id"`
+		Answer      string `json:"answer"`
+		WasFreeform bool   `json:"was_freeform"`
+	}
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if body.RequestID == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("request_id required"))
+		return
+	}
+	res := copilot.UserInputResponse{Answer: body.Answer, WasFreeform: body.WasFreeform}
+	if err := r.svc.RespondToUserInput(id, body.RequestID, res); err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // streamBuffer is the shared SSE driver used by both sendMessage and

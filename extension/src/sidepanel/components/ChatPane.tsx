@@ -7,6 +7,8 @@ import { sendMessage, resumeStream } from "../api/messages";
 import { captureActiveTabContext, formatPageContext } from "../api/pageContext";
 import { MessageList } from "./MessageList";
 import { ChatInput } from "./ChatInput";
+import { ElicitationModal } from "./ElicitationModal";
+import { AskUserModal } from "./AskUserModal";
 
 interface Props {
   daemonOnline: boolean;
@@ -18,6 +20,14 @@ export function ChatPane({ daemonOnline }: Props) {
   const upsert = useSessionStore((s) => s.upsert);
   const sessions = useSessionStore((s) => s.sessions);
   const usage = useChatStore((s) => (activeId ? s.usagePerSession[activeId] : null));
+  const pendingElicitation = useChatStore((s) =>
+    activeId ? s.pendingElicitation[activeId] : null,
+  );
+  const pendingAskUser = useChatStore((s) =>
+    activeId ? s.pendingAskUser[activeId] : null,
+  );
+  const setPendingElicitation = useChatStore((s) => s.setPendingElicitation);
+  const setPendingAskUser = useChatStore((s) => s.setPendingAskUser);
   const [error, setError] = useState<string | null>(null);
   const [includeContext, setIncludeContext] = useState(false);
   const inflight = useRef<AbortController | null>(null);
@@ -97,6 +107,74 @@ export function ChatPane({ daemonOnline }: Props) {
         onToggleContext={setIncludeContext}
         onSubmit={handleSubmit}
       />
+      {activeId && pendingElicitation && (
+        <ElicitationModal
+          request={pendingElicitation}
+          onAccept={async (content) => {
+            try {
+              await sessionsApi.respondElicitation(api, activeId, {
+                request_id: pendingElicitation.requestId,
+                action: "accept",
+                content,
+              });
+            } catch (e) {
+              setError((e as Error).message);
+            }
+            setPendingElicitation(activeId, null);
+          }}
+          onDecline={async () => {
+            try {
+              await sessionsApi.respondElicitation(api, activeId, {
+                request_id: pendingElicitation.requestId,
+                action: "decline",
+              });
+            } catch (e) {
+              setError((e as Error).message);
+            }
+            setPendingElicitation(activeId, null);
+          }}
+          onCancel={async () => {
+            try {
+              await sessionsApi.respondElicitation(api, activeId, {
+                request_id: pendingElicitation.requestId,
+                action: "cancel",
+              });
+            } catch (e) {
+              setError((e as Error).message);
+            }
+            setPendingElicitation(activeId, null);
+          }}
+        />
+      )}
+      {activeId && pendingAskUser && (
+        <AskUserModal
+          request={pendingAskUser}
+          onSubmit={async (answer, wasFreeform) => {
+            try {
+              await sessionsApi.respondUserInput(api, activeId, {
+                request_id: pendingAskUser.requestId,
+                answer,
+                was_freeform: wasFreeform,
+              });
+            } catch (e) {
+              setError((e as Error).message);
+            }
+            setPendingAskUser(activeId, null);
+          }}
+          onCancel={async () => {
+            try {
+              await sessionsApi.respondUserInput(api, activeId, {
+                request_id: pendingAskUser.requestId,
+                answer: "",
+                was_freeform: false,
+              });
+            } catch (e) {
+              setError((e as Error).message);
+            }
+            setPendingAskUser(activeId, null);
+          }}
+        />
+      )}
     </div>
   );
 }

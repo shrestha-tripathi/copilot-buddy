@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/google/uuid"
 
 	copilot "github.com/github/copilot-sdk/go"
 	"github.com/sanchar10/copilot-buddy/backend/internal/models"
@@ -22,9 +25,9 @@ type SessionClient struct {
 	SessionID string
 	CWD       string
 
-	client       *copilot.Client
-	session      *copilot.Session
-	model        string
+	client  *copilot.Client
+	session *copilot.Session
+	model   string
 
 	mu           sync.Mutex
 	lastActivity time.Time
@@ -33,6 +36,15 @@ type SessionClient struct {
 	// One in-flight turn at a time; serialise sends so the SSE event
 	// stream doesn't interleave between turns from the same session.
 	sendMu sync.Mutex
+
+	// Active turn buffer used by elicitation/user-input handlers to
+	// emit SSE events. Cleared after each turn.
+	activeBuf atomic.Pointer[ResponseBuffer]
+
+	// Pending elicitation/user-input requests awaiting a response from
+	// the panel. Survives across turns so a slow user response on a
+	// previous turn can still resolve.
+	Pending *pendingRequests
 }
 
 // NewSessionClient does NOT contact the SDK — that happens lazily in
@@ -43,6 +55,7 @@ func NewSessionClient(sessionID, cwd, model string) *SessionClient {
 		CWD:          cwd,
 		model:        model,
 		lastActivity: time.Now(),
+		Pending:      newPendingRequests(),
 	}
 }
 
@@ -82,6 +95,8 @@ func (c *SessionClient) ensureStarted(ctx context.Context, systemMessage string)
 		Streaming:           true,
 		WorkingDirectory:    c.CWD,
 		OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+		OnElicitationRequest: c.handleElicitation,
+		OnUserInputRequest:   c.handleUserInput,
 	}
 	if systemMessage != "" {
 		cfg.SystemMessage = &copilot.SystemMessageConfig{
@@ -129,6 +144,9 @@ func (c *SessionClient) SendMessage(
 	}
 	c.touch()
 
+	c.activeBuf.Store(buf)
+	defer c.activeBuf.Store(nil)
+
 	proc := NewEventProcessor(buf)
 	unsub := c.session.On(proc.Handle)
 	defer unsub()
@@ -168,4 +186,58 @@ func (c *SessionClient) Stop() {
 func AppendError(buf *ResponseBuffer, err error) {
 	buf.Append(models.Event{Name: models.EventError, Data: models.ErrorPayload{Error: err.Error()}})
 	buf.Fail(err.Error())
+}
+
+// ----------------------------------------------------------------------
+// SDK handlers
+// ----------------------------------------------------------------------
+
+// handleElicitation is invoked synchronously by the SDK when an
+// elicitation request comes in. We mint a request id, push an SSE
+// event, and block until ResolveElicitation is called or ctx expires.
+func (c *SessionClient) handleElicitation(ctx copilot.ElicitationContext) (copilot.ElicitationResult, error) {
+	requestID := uuid.NewString()
+	buf := c.activeBuf.Load()
+	if buf == nil {
+		return copilot.ElicitationResult{Action: "cancel"}, fmt.Errorf("no active turn buffer")
+	}
+	payload := map[string]any{
+		"request_id":         requestID,
+		"message":            ctx.Message,
+		"requested_schema":   ctx.RequestedSchema,
+		"mode":               ctx.Mode,
+		"elicitation_source": ctx.ElicitationSource,
+		"url":                ctx.URL,
+	}
+	buf.Append(models.Event{Name: models.EventElicitation, Data: payload})
+
+	// Bound the wait so a panel that never responds doesn't hang the
+	// SDK forever. Five minutes matches the buffer TTL.
+	awaitCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	return c.Pending.awaitElicitation(awaitCtx, requestID)
+}
+
+// handleUserInput is the SDK callback for the agent's `ask_user` tool.
+func (c *SessionClient) handleUserInput(req copilot.UserInputRequest, _ copilot.UserInputInvocation) (copilot.UserInputResponse, error) {
+	requestID := uuid.NewString()
+	buf := c.activeBuf.Load()
+	if buf == nil {
+		return copilot.UserInputResponse{}, fmt.Errorf("no active turn buffer")
+	}
+	allowFreeform := true
+	if req.AllowFreeform != nil {
+		allowFreeform = *req.AllowFreeform
+	}
+	payload := map[string]any{
+		"request_id":     requestID,
+		"question":       req.Question,
+		"choices":        req.Choices,
+		"allow_freeform": allowFreeform,
+	}
+	buf.Append(models.Event{Name: models.EventAskUser, Data: payload})
+
+	awaitCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	return c.Pending.awaitUserInput(awaitCtx, requestID)
 }

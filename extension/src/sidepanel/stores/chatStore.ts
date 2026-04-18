@@ -29,6 +29,22 @@ export interface UsageInfo {
   messagesLength: number;
 }
 
+export interface ElicitationRequest {
+  requestId: string;
+  message: string;
+  requestedSchema?: Record<string, unknown> | null;
+  mode?: string;
+  source?: string;
+  url?: string;
+}
+
+export interface AskUserRequest {
+  requestId: string;
+  question: string;
+  choices: string[];
+  allowFreeform: boolean;
+}
+
 interface StreamingState {
   content: string;
   steps: Step[];
@@ -50,6 +66,8 @@ interface ChatState {
   messagesPerSession: Record<string, Message[]>;
   streamingPerSession: Record<string, StreamingState>;
   usagePerSession: Record<string, UsageInfo | null>;
+  pendingElicitation: Record<string, ElicitationRequest | null>;
+  pendingAskUser: Record<string, AskUserRequest | null>;
 
   getStreaming: (sessionId: string | null) => StreamingState;
   setMessages: (sessionId: string, messages: Message[]) => void;
@@ -60,6 +78,8 @@ interface ChatState {
   setStreaming: (sessionId: string, isStreaming: boolean) => void;
   finalizeAssistantMessage: (sessionId: string, messageId: string) => void;
   clearSession: (sessionId: string) => void;
+  setPendingElicitation: (sessionId: string, req: ElicitationRequest | null) => void;
+  setPendingAskUser: (sessionId: string, req: AskUserRequest | null) => void;
 }
 
 function flushBuffer(sessionId: string) {
@@ -86,6 +106,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messagesPerSession: {},
   streamingPerSession: {},
   usagePerSession: {},
+  pendingElicitation: {},
+  pendingAskUser: {},
 
   getStreaming: (sessionId) => {
     if (!sessionId) return EMPTY_STREAM;
@@ -176,10 +198,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const m = { ...s.messagesPerSession };
       const st = { ...s.streamingPerSession };
       const u = { ...s.usagePerSession };
+      const pe = { ...s.pendingElicitation };
+      const pa = { ...s.pendingAskUser };
       delete m[sessionId];
       delete st[sessionId];
       delete u[sessionId];
-      return { messagesPerSession: m, streamingPerSession: st, usagePerSession: u };
+      delete pe[sessionId];
+      delete pa[sessionId];
+      return {
+        messagesPerSession: m,
+        streamingPerSession: st,
+        usagePerSession: u,
+        pendingElicitation: pe,
+        pendingAskUser: pa,
+      };
     });
   },
+
+  setPendingElicitation: (sessionId, req) =>
+    set((s) => ({
+      pendingElicitation: { ...s.pendingElicitation, [sessionId]: req },
+    })),
+
+  setPendingAskUser: (sessionId, req) =>
+    set((s) => ({
+      pendingAskUser: { ...s.pendingAskUser, [sessionId]: req },
+    })),
 }));
