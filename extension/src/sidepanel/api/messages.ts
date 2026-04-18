@@ -101,11 +101,28 @@ function buildEventDispatcher(
   };
 }
 
+import type { DisplayAttachment } from "../stores/chatStore";
+
+export type { DisplayAttachment };
+
+export interface WireAttachment {
+  kind: "blob" | "text";
+  name: string;
+  mime_type?: string;
+  data?: string; // base64
+  text?: string;
+}
+
 export async function sendMessage(
   api: Api,
   sessionId: string,
   content: string,
-  opts: DispatchOpts & { isNewSession?: boolean; signal?: AbortSignal } = {},
+  opts: DispatchOpts & {
+    isNewSession?: boolean;
+    signal?: AbortSignal;
+    attachments?: WireAttachment[];
+    displayAttachments?: DisplayAttachment[];
+  } = {},
 ): Promise<void> {
   const chat = useChatStore.getState();
   // Reset any leftover streaming state from a prior turn so we don't
@@ -116,12 +133,17 @@ export async function sendMessage(
     role: "user",
     content,
     createdAt: Date.now(),
+    attachments: opts.displayAttachments,
   });
   chat.setStreaming(sessionId, true);
 
   await api.stream(`/api/sessions/${sessionId}/messages`, buildEventDispatcher(sessionId, opts), {
     method: "POST",
-    body: { content, is_new_session: !!opts.isNewSession },
+    body: {
+      content,
+      is_new_session: !!opts.isNewSession,
+      attachments: opts.attachments ?? [],
+    },
     signal: opts.signal,
   });
 }

@@ -5,13 +5,19 @@ import { useApi } from "../api/useApi";
 import { sessionsApi } from "@/shared/api/sessions";
 import { useSessionStore } from "../stores/sessionStore";
 import { useChatStore } from "../stores/chatStore";
-import { sendMessage, resumeStream } from "../api/messages";
+import {
+  sendMessage,
+  resumeStream,
+  type DisplayAttachment,
+  type WireAttachment,
+} from "../api/messages";
 import { formatPageContext, type PageContext } from "../api/pageContext";
 import { MessageList } from "./MessageList";
 import { ChatInput, type Attachment } from "./ChatInput";
 import { ElicitationModal } from "./ElicitationModal";
 import { AskUserModal } from "./AskUserModal";
 import { Button } from "../ui/Button";
+import { formatBytes } from "../lib/format";
 
 interface Props {
   daemonOnline: boolean;
@@ -69,29 +75,77 @@ export function ChatPane({ daemonOnline }: Props) {
     if (!activeId) return;
     setError(null);
 
-    const parts: string[] = [];
+    const wire: WireAttachment[] = [];
+    const display: DisplayAttachment[] = [];
+
     if (includeContext && extras.pageContext) {
-      parts.push(formatPageContext(extras.pageContext));
+      const formatted = formatPageContext(extras.pageContext);
+      const name = extras.pageContext.title
+        ? `Page: ${extras.pageContext.title}`
+        : extras.pageContext.url;
+      wire.push({
+        kind: "text",
+        name,
+        text: formatted,
+      });
+      display.push({
+        id: crypto.randomUUID(),
+        name,
+        size: formatted.length,
+        kind: "context",
+        summary: extras.pageContext.selection
+          ? `Selection · ${extras.pageContext.selection.length} chars`
+          : extras.pageContext.textExcerpt
+          ? `Excerpt · ${extras.pageContext.textExcerpt.length} chars`
+          : "URL + title",
+      });
     }
     for (const a of extras.attachments) {
       if (a.kind === "text") {
-        parts.push(`<!-- attachment: ${a.name} (${a.size} bytes) -->\n\`\`\`\n${a.content}\n\`\`\``);
+        wire.push({ kind: "text", name: a.name, text: a.content });
+        display.push({
+          id: a.id,
+          name: a.name,
+          size: a.size,
+          kind: "text",
+          summary: `${formatBytes(a.size)} · text`,
+        });
       } else {
-        parts.push(
-          `<!-- attached image: ${a.name} (${a.size} bytes) — not inlined; describe if relevant -->`,
-        );
+        // image data-url shape: "data:image/png;base64,AAAA..."
+        const commaIdx = a.content.indexOf(",");
+        const meta = a.content.slice(5, commaIdx); // image/png;base64
+        const mime = meta.split(";")[0] || "image/png";
+        const b64 = a.content.slice(commaIdx + 1);
+        wire.push({
+          kind: "blob",
+          name: a.name,
+          mime_type: mime,
+          data: b64,
+        });
+        display.push({
+          id: a.id,
+          name: a.name,
+          size: a.size,
+          kind: "image",
+          mimeType: mime,
+          previewDataUrl: a.content,
+        });
       }
     }
-    if (text) parts.push(text);
-    const prompt = parts.join("\n\n").trim();
-    if (!prompt) return;
+
+    // User bubble displays only the text typed; attachment chips are
+    // rendered separately from metadata.
+    const displayText = text.trim();
+    if (!displayText && wire.length === 0) return;
 
     inflight.current?.abort();
     const ctrl = new AbortController();
     inflight.current = ctrl;
     try {
-      await sendMessage(api, activeId, prompt, {
+      await sendMessage(api, activeId, displayText, {
         signal: ctrl.signal,
+        attachments: wire,
+        displayAttachments: display,
         onError: (msg) => {
           setError(msg);
           toast.error(msg);

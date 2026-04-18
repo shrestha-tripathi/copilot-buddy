@@ -35,7 +35,7 @@ func TestRoundTrip(t *testing.T) {
 		ID:    "test-roundtrip-" + time.Now().Format("150405"),
 		Model: "gpt-4.1",
 	}
-	buf := svc.SendMessageBackground(ctx, sess, "Reply with just the word OK.")
+	buf := svc.SendMessageBackground(ctx, sess, "Reply with just the word OK.", nil)
 
 	// Drain by polling Wait every 5s until status != Running.
 	from := 0

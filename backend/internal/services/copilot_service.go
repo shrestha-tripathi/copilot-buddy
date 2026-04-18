@@ -202,6 +202,7 @@ func (s *CopilotService) SendMessageBackground(
 	ctx context.Context,
 	sess *models.Session,
 	prompt string,
+	attachments []copilot.Attachment,
 ) *ResponseBuffer {
 	buf := s.Buffers.CreateOrReplace(sess.ID)
 	client := s.GetOrCreateClient(sess)
@@ -218,7 +219,7 @@ func (s *CopilotService) SendMessageBackground(
 				return
 			}
 		}()
-		if err := client.SendMessage(bgCtx, prompt, sess.SystemMessage, buf); err != nil {
+		if err := client.SendMessage(bgCtx, prompt, sess.SystemMessage, attachments, buf); err != nil {
 			AppendError(buf, err)
 			return
 		}

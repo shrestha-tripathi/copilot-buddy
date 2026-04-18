@@ -158,6 +158,7 @@ func (c *SessionClient) SendMessage(
 	ctx context.Context,
 	prompt string,
 	systemMessage string,
+	attachments []copilot.Attachment,
 	buf *ResponseBuffer,
 ) error {
 	c.sendMu.Lock()
@@ -175,7 +176,10 @@ func (c *SessionClient) SendMessage(
 	unsub := c.session.On(proc.Handle)
 	defer unsub()
 
-	if _, err := c.session.Send(ctx, copilot.MessageOptions{Prompt: prompt}); err != nil {
+	if _, err := c.session.Send(ctx, copilot.MessageOptions{
+		Prompt:      prompt,
+		Attachments: attachments,
+	}); err != nil {
 		return fmt.Errorf("session.Send: %w", err)
 	}
 

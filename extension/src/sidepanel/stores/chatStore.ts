@@ -16,6 +16,17 @@ export interface Message {
   content: string;
   createdAt: number;
   steps?: Step[];
+  attachments?: DisplayAttachment[];
+}
+
+export interface DisplayAttachment {
+  id: string;
+  name: string;
+  mimeType?: string;
+  size: number;
+  kind: "image" | "text" | "context";
+  previewDataUrl?: string;
+  summary?: string;
 }
 
 export interface Step {

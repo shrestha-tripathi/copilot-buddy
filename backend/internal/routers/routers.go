@@ -228,8 +228,39 @@ func (r *router) patchSession(w http.ResponseWriter, req *http.Request) {
 // messaging — the SSE-streaming hot path
 // ----------------------------------------------------------------------
 
+type sendMessageAttachment struct {
+	Kind        string `json:"kind"`        // "blob" | "text"
+	Name        string `json:"name"`
+	MIMEType    string `json:"mime_type,omitempty"`
+	Data        string `json:"data,omitempty"`        // base64 for blobs
+	Text        string `json:"text,omitempty"`        // inline text content
+}
+
 type sendMessageReq struct {
-	Content string `json:"content"`
+	Content     string                   `json:"content"`
+	Attachments []sendMessageAttachment  `json:"attachments,omitempty"`
+}
+
+func (a sendMessageAttachment) toSDK() copilot.Attachment {
+	name := a.Name
+	switch a.Kind {
+	case "text":
+		txt := a.Text
+		return copilot.Attachment{
+			Type:        copilot.AttachmentTypeSelection,
+			DisplayName: &name,
+			Text:        &txt,
+		}
+	default:
+		mime := a.MIMEType
+		data := a.Data
+		return copilot.Attachment{
+			Type:        copilot.AttachmentTypeBlob,
+			DisplayName: &name,
+			MIMEType:    &mime,
+			Data:        &data,
+		}
+	}
 }
 
 // sendMessage starts the agent turn AND streams events back on the same
@@ -262,8 +293,19 @@ func (r *router) sendMessage(w http.ResponseWriter, req *http.Request) {
 	sess.UpdatedAt = time.Now().UTC()
 	_ = r.store.Save(sess)
 
-	buf := r.svc.SendMessageBackground(req.Context(), sess, body.Content)
+	buf := r.svc.SendMessageBackground(req.Context(), sess, body.Content, toSDKAttachments(body.Attachments))
 	streamBuffer(w, req.Context(), buf, 0)
+}
+
+func toSDKAttachments(in []sendMessageAttachment) []copilot.Attachment {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]copilot.Attachment, 0, len(in))
+	for _, a := range in {
+		out = append(out, a.toSDK())
+	}
+	return out
 }
 
 // responseStream resumes streaming from `?from=N` (default 0) for an

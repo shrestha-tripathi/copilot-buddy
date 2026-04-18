@@ -2,9 +2,26 @@ import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
-import { Check, ChevronDown, ChevronRight, Copy, Sparkles, Terminal, User2 } from "lucide-react";
-import { useChatStore, type Message, type Step } from "../stores/chatStore";
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  FileText,
+  Globe,
+  Image as ImageIcon,
+  Terminal,
+  User2,
+} from "lucide-react";
+import {
+  useChatStore,
+  type DisplayAttachment,
+  type Message,
+  type Step,
+} from "../stores/chatStore";
 import { cn } from "../lib/cn";
+import { formatBytes } from "../lib/format";
+import { CopilotMark } from "../ui/CopilotMark";
 
 interface Props {
   sessionId: string | null;
@@ -32,7 +49,7 @@ export function MessageList({ sessionId }: Props) {
   if (messages.length === 0 && !streaming.isStreaming) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
-        <Sparkles className="h-6 w-6 text-[var(--color-primary)]" />
+        <CopilotMark size={36} />
         <p className="text-[13px] font-medium">Ready when you are.</p>
         <p className="max-w-[260px] text-[11.5px] text-[var(--color-text-dim)]">
           Try "summarise this page" with page context enabled, or ask anything.
@@ -86,6 +103,9 @@ function MessageBubble({ message }: { message: Message }) {
         {message.steps?.map((s, i) => (
           <StepCard key={i} step={s} />
         ))}
+        {message.attachments && message.attachments.length > 0 && (
+          <AttachmentStrip attachments={message.attachments} isUser={isUser} />
+        )}
         {message.content && (
           <div
             className={cn(
@@ -103,18 +123,68 @@ function MessageBubble({ message }: { message: Message }) {
   );
 }
 
+function AttachmentStrip({
+  attachments,
+  isUser,
+}: {
+  attachments: DisplayAttachment[];
+  isUser: boolean;
+}) {
+  return (
+    <div className={cn("flex flex-wrap gap-1.5", isUser && "justify-end")}>
+      {attachments.map((a) => {
+        if (a.kind === "image" && a.previewDataUrl) {
+          return (
+            <a
+              key={a.id}
+              href={a.previewDataUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="group relative block h-16 w-16 overflow-hidden rounded-lg ring-1 ring-[var(--color-border-subtle)]"
+              title={`${a.name} · ${formatBytes(a.size)}`}
+            >
+              <img src={a.previewDataUrl} alt={a.name} className="h-full w-full object-cover" />
+              <div className="absolute inset-x-0 bottom-0 truncate bg-black/60 px-1 py-0.5 text-[9.5px] text-white">
+                {a.name}
+              </div>
+            </a>
+          );
+        }
+        const Icon = a.kind === "context" ? Globe : a.kind === "image" ? ImageIcon : FileText;
+        const tone = a.kind === "context" ? "info" : "neutral";
+        return (
+          <span
+            key={a.id}
+            className={cn(
+              "inline-flex max-w-[240px] items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] ring-1",
+              tone === "info"
+                ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] ring-[var(--color-primary)]/30"
+                : "bg-[var(--color-bg-elev-2)] text-[var(--color-text-muted)] ring-[var(--color-border-subtle)]",
+            )}
+            title={`${a.name}${a.summary ? ` — ${a.summary}` : ""}`}
+          >
+            <Icon className="h-3 w-3 shrink-0" />
+            <span className="truncate">{a.name}</span>
+            {a.summary && <span className="shrink-0 opacity-60">· {a.summary}</span>}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 function Avatar({ role }: { role: "user" | "assistant" | "system" }) {
   const isUser = role === "user";
+  if (!isUser) {
+    return (
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full ring-1 ring-[var(--color-border-subtle)]">
+        <CopilotMark size={22} />
+      </div>
+    );
+  }
   return (
-    <div
-      className={cn(
-        "flex h-7 w-7 shrink-0 items-center justify-center rounded-full ring-1",
-        isUser
-          ? "bg-[var(--color-primary)]/20 text-[var(--color-primary)] ring-[var(--color-primary)]/40"
-          : "bg-gradient-to-br from-fuchsia-500/20 to-cyan-500/20 text-[var(--color-text)] ring-[var(--color-border)]",
-      )}
-    >
-      {isUser ? <User2 className="h-3.5 w-3.5" /> : <Sparkles className="h-3.5 w-3.5" />}
+    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary)]/20 text-[var(--color-primary)] ring-1 ring-[var(--color-primary)]/40">
+      <User2 className="h-3.5 w-3.5" />
     </div>
   );
 }

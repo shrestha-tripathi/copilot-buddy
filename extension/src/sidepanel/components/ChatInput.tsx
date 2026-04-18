@@ -10,6 +10,7 @@ import {
 import { Button } from "../ui/Button";
 import { Textarea } from "../ui/Input";
 import { cn } from "../lib/cn";
+import { formatBytes, truncate } from "../lib/format";
 
 export interface Attachment {
   id: string;
@@ -317,16 +318,6 @@ function readAsDataURL(file: File): Promise<string> {
     r.onerror = () => reject(r.error);
     r.readAsDataURL(file);
   });
-}
-
-function formatBytes(n: number) {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${Math.round(n / 102.4) / 10} KB`;
-  return `${Math.round(n / (1024 * 102.4)) / 10} MB`;
-}
-
-function truncate(s: string, n: number) {
-  return s.length <= n ? s : s.slice(0, n - 1) + "…";
 }
 
 function CaptureFailureChip({
