@@ -77,17 +77,20 @@ export function ChatPane({ daemonOnline }: Props) {
 
     const wire: WireAttachment[] = [];
     const display: DisplayAttachment[] = [];
+    // Chunks appended to the prompt text sent to the backend. Page
+    // context and text-file contents are inlined here (the CLI's
+    // `selection` attachment requires a real filePath, which we don't
+    // have in a browser sandbox). The UI still hides this from the
+    // user bubble by displaying `displayText` only and rendering
+    // compact chips from `displayAttachments`.
+    const backendChunks: string[] = [];
 
     if (includeContext && extras.pageContext) {
       const formatted = formatPageContext(extras.pageContext);
       const name = extras.pageContext.title
         ? `Page: ${extras.pageContext.title}`
         : extras.pageContext.url;
-      wire.push({
-        kind: "text",
-        name,
-        text: formatted,
-      });
+      backendChunks.push(formatted);
       display.push({
         id: crypto.randomUUID(),
         name,
@@ -102,7 +105,9 @@ export function ChatPane({ daemonOnline }: Props) {
     }
     for (const a of extras.attachments) {
       if (a.kind === "text") {
-        wire.push({ kind: "text", name: a.name, text: a.content });
+        backendChunks.push(
+          `--- Attached file: ${a.name} (${formatBytes(a.size)}) ---\n${a.content}\n--- end of ${a.name} ---`,
+        );
         display.push({
           id: a.id,
           name: a.name,
@@ -133,10 +138,15 @@ export function ChatPane({ daemonOnline }: Props) {
       }
     }
 
-    // User bubble displays only the text typed; attachment chips are
-    // rendered separately from metadata.
     const displayText = text.trim();
-    if (!displayText && wire.length === 0) return;
+    if (!displayText && backendChunks.length === 0 && wire.length === 0) return;
+
+    // Build the backend prompt: the user's typed text first, then any
+    // inlined context/file chunks. If the user typed nothing we still
+    // send something reasonable so the model has a prompt to act on.
+    const backendText =
+      [displayText, ...backendChunks].filter((s) => s && s.length > 0).join("\n\n") ||
+      "(attachments only)";
 
     inflight.current?.abort();
     const ctrl = new AbortController();
@@ -144,6 +154,7 @@ export function ChatPane({ daemonOnline }: Props) {
     try {
       await sendMessage(api, activeId, displayText, {
         signal: ctrl.signal,
+        wireContent: backendText,
         attachments: wire,
         displayAttachments: display,
         onError: (msg) => {

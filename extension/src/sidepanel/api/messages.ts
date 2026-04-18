@@ -116,10 +116,11 @@ export interface WireAttachment {
 export async function sendMessage(
   api: Api,
   sessionId: string,
-  content: string,
+  displayContent: string,
   opts: DispatchOpts & {
     isNewSession?: boolean;
     signal?: AbortSignal;
+    wireContent?: string;
     attachments?: WireAttachment[];
     displayAttachments?: DisplayAttachment[];
   } = {},
@@ -131,16 +132,18 @@ export async function sendMessage(
   chat.addMessage(sessionId, {
     id: crypto.randomUUID(),
     role: "user",
-    content,
+    content: displayContent,
     createdAt: Date.now(),
     attachments: opts.displayAttachments,
   });
   chat.setStreaming(sessionId, true);
 
+  const backendContent = opts.wireContent ?? displayContent;
+
   await api.stream(`/api/sessions/${sessionId}/messages`, buildEventDispatcher(sessionId, opts), {
     method: "POST",
     body: {
-      content,
+      content: backendContent,
       is_new_session: !!opts.isNewSession,
       attachments: opts.attachments ?? [],
     },
