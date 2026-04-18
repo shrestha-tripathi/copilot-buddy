@@ -58,6 +58,11 @@ function buildEventDispatcher(
         if (typeof d.title === "string") opts.onTitleChanged?.(d.title);
         break;
       case SSE_EVENTS.DONE:
+        // Fallback finalizer — if the server didn't emit turn_done
+        // (older daemons), promote whatever's in streaming state to a
+        // persisted assistant message here. finalize is idempotent and
+        // no-ops on empty content.
+        chat.finalizeAssistantMessage(sessionId, assistantMsgId);
         chat.setStreaming(sessionId, false);
         opts.onDone?.(d as DonePayload);
         break;
@@ -103,6 +108,9 @@ export async function sendMessage(
   opts: DispatchOpts & { isNewSession?: boolean; signal?: AbortSignal } = {},
 ): Promise<void> {
   const chat = useChatStore.getState();
+  // Reset any leftover streaming state from a prior turn so we don't
+  // render stale content while the server warms up.
+  chat.resetStreaming(sessionId);
   chat.addMessage(sessionId, {
     id: crypto.randomUUID(),
     role: "user",

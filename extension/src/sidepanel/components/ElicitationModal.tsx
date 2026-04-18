@@ -99,9 +99,9 @@ export function ElicitationModal({ request, onAccept, onDecline, onCancel }: Pro
             );
           })}
           <div className="cb-modal-actions">
-            <button type="button" onClick={onCancel}>Cancel</button>
-            <button type="button" onClick={onDecline}>Decline</button>
-            <button type="submit">Submit</button>
+            <button type="button" className="cb-btn" onClick={onCancel}>Cancel</button>
+            <button type="button" className="cb-btn" onClick={onDecline}>Decline</button>
+            <button type="submit" className="cb-btn cb-btn--primary">Submit</button>
           </div>
         </form>
       </div>

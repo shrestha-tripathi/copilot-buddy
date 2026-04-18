@@ -47,7 +47,7 @@ export function ChatInput({ disabled, includeContext, onToggleContext, onSubmit 
           />
           Include page context
         </label>
-        <button type="submit" disabled={disabled || !value.trim()}>
+        <button className="cb-btn cb-btn--primary" type="submit" disabled={disabled || !value.trim()}>
           Send
         </button>
       </div>

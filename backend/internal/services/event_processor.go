@@ -98,9 +98,22 @@ func (p *EventProcessor) Handle(event copilot.SessionEvent) {
 
 	// -------- end of turn --------
 	case *copilot.AssistantTurnEndData:
+		// Emit turn_done so the extension can finalize the assistant
+		// message into its persistent messages list (done alone would
+		// leave it stranded in transient streaming state).
+		p.buf.Append(models.Event{
+			Name: models.EventTurnDone,
+			Data: map[string]any{"message_id": ""},
+		})
 		p.finish()
 	case *copilot.SessionIdleData:
 		// Fallback: if we somehow miss the turn-end, idle still terminates.
+		if !p.closed {
+			p.buf.Append(models.Event{
+				Name: models.EventTurnDone,
+				Data: map[string]any{"message_id": ""},
+			})
+		}
 		p.finish()
 
 	default:

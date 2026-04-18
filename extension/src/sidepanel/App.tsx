@@ -78,16 +78,19 @@ export function App() {
   return (
     <main className="cb-shell">
       <header className="cb-header">
-        <h1>Copilot Buddy</h1>
+        <div className="cb-header__brand">
+          <div className="cb-header__logo">CB</div>
+          <h1>Copilot Buddy</h1>
+        </div>
         <span
           className={`cb-status ${reachable ? "cb-status--ok" : "cb-status--down"}`}
           title={status?.error}
         >
           {status === null
-            ? "checking…"
+            ? "checking"
             : reachable
-              ? "daemon online"
-              : `offline${status.error ? ` (${status.error})` : ""}`}
+              ? "online"
+              : "offline"}
         </span>
       </header>
       <SessionPicker />

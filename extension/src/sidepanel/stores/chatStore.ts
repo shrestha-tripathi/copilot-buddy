@@ -72,6 +72,7 @@ interface ChatState {
   getStreaming: (sessionId: string | null) => StreamingState;
   setMessages: (sessionId: string, messages: Message[]) => void;
   addMessage: (sessionId: string, message: Message) => void;
+  resetStreaming: (sessionId: string) => void;
   appendDelta: (sessionId: string, content: string) => void;
   addStep: (sessionId: string, step: Step) => void;
   setUsage: (sessionId: string, usage: UsageInfo) => void;
@@ -132,6 +133,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       },
     })),
 
+  resetStreaming: (sessionId) => {
+    if (flushTimers[sessionId]) {
+      clearTimeout(flushTimers[sessionId]);
+      delete flushTimers[sessionId];
+    }
+    delete deltaBuffers[sessionId];
+    set((s) => ({
+      streamingPerSession: { ...s.streamingPerSession, [sessionId]: EMPTY_STREAM },
+    }));
+  },
+
   appendDelta: (sessionId, content) => {
     if (!deltaBuffers[sessionId]) deltaBuffers[sessionId] = [];
     deltaBuffers[sessionId].push(content);
@@ -171,6 +183,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
   finalizeAssistantMessage: (sessionId, messageId) => {
     flushBuffer(sessionId);
     const cur = get().streamingPerSession[sessionId] ?? EMPTY_STREAM;
+    // Nothing to finalize — avoid creating empty bubbles when the
+    // server sends both turn_done and done for the same turn.
+    if (!cur.content && (!cur.steps || cur.steps.length === 0)) {
+      set((s) => ({
+        streamingPerSession: { ...s.streamingPerSession, [sessionId]: EMPTY_STREAM },
+      }));
+      return;
+    }
     const message: Message = {
       id: messageId || crypto.randomUUID(),
       role: "assistant",

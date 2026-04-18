@@ -55,7 +55,7 @@ export function SessionPicker() {
     <div className="cb-sessions">
       <div className="cb-sessions__head">
         <span>Sessions</span>
-        <button onClick={onCreate}>+ New</button>
+        <button className="cb-btn" onClick={onCreate}>+ New</button>
       </div>
       {loading && <div className="cb-empty">Loading…</div>}
       {error && <div className="cb-error">{error}</div>}

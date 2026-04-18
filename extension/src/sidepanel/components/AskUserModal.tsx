@@ -38,11 +38,11 @@ export function AskUserModal({ request, onSubmit, onCancel }: Props) {
               placeholder="Type your answer…"
               autoFocus
             />
-            <button type="submit" disabled={!freeform.trim()}>Send</button>
+            <button type="submit" className="cb-btn cb-btn--primary" disabled={!freeform.trim()}>Send</button>
           </form>
         )}
         <div className="cb-modal-actions">
-          <button type="button" onClick={onCancel}>Cancel</button>
+          <button type="button" className="cb-btn" onClick={onCancel}>Cancel</button>
         </div>
       </div>
     </div>

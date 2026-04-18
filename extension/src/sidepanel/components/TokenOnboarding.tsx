@@ -32,7 +32,7 @@ export function TokenOnboarding() {
           required
         />
       </label>
-      <button type="submit">Save & connect</button>
+      <button type="submit" className="cb-btn cb-btn--primary">Save & connect</button>
     </form>
   );
 }
