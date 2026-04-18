@@ -20,6 +20,7 @@ export default defineManifest({
   },
   permissions: ["storage", "sidePanel", "activeTab", "scripting", "tabs"],
   host_permissions: ["http://127.0.0.1/*", "http://localhost/*"],
+  optional_host_permissions: ["*://*/*"],
   icons: {
     16: "public/icons/icon-16.png",
     48: "public/icons/icon-48.png",

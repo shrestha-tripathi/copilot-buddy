@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { toast } from "sonner";
-import { FileText, Globe, Image as ImageIcon, Paperclip, Send, X } from "lucide-react";
-import { captureActiveTabContext, type PageContext } from "../api/pageContext";
+import { FileText, Globe, Image as ImageIcon, Paperclip, Send, ShieldCheck, X } from "lucide-react";
+import {
+  captureActiveTabContext,
+  requestAllUrlsPermission,
+  type CaptureFailure,
+  type PageContext,
+} from "../api/pageContext";
 import { Button } from "../ui/Button";
 import { Textarea } from "../ui/Input";
 import { cn } from "../lib/cn";
@@ -27,36 +32,56 @@ export function ChatInput({ disabled, includeContext, onToggleContext, onSubmit 
   const [value, setValue] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [pageCtx, setPageCtx] = useState<PageContext | null>(null);
-  const [ctxError, setCtxError] = useState<string | null>(null);
+  const [ctxFailure, setCtxFailure] = useState<CaptureFailure | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
   const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+
+  const refreshPageCtx = async () => {
+    const r = await captureActiveTabContext();
+    if (r.ok) {
+      setPageCtx(r.context);
+      setCtxFailure(null);
+    } else {
+      setPageCtx(null);
+      setCtxFailure(r.reason);
+    }
+  };
 
   // Refresh page context whenever toggled on; fire-and-forget.
   useEffect(() => {
     let cancelled = false;
     if (!includeContext) {
       setPageCtx(null);
-      setCtxError(null);
+      setCtxFailure(null);
       return;
     }
-    captureActiveTabContext()
-      .then((ctx) => {
-        if (cancelled) return;
-        if (!ctx) {
-          setPageCtx(null);
-          setCtxError("Couldn't capture this page (restricted URL?).");
-        } else {
-          setPageCtx(ctx);
-          setCtxError(null);
-        }
-      })
-      .catch((e) => !cancelled && setCtxError((e as Error).message));
+    (async () => {
+      const r = await captureActiveTabContext();
+      if (cancelled) return;
+      if (r.ok) {
+        setPageCtx(r.context);
+        setCtxFailure(null);
+      } else {
+        setPageCtx(null);
+        setCtxFailure(r.reason);
+      }
+    })();
     return () => {
       cancelled = true;
     };
   }, [includeContext]);
+
+  const grantAccess = async () => {
+    const ok = await requestAllUrlsPermission();
+    if (ok) {
+      toast.success("Access granted — capturing page…");
+      await refreshPageCtx();
+    } else {
+      toast.error("Permission denied");
+    }
+  };
 
   // Auto-resize textarea.
   useEffect(() => {
@@ -138,7 +163,7 @@ export function ChatInput({ disabled, includeContext, onToggleContext, onSubmit 
       onDrop={onDrop}
     >
       {/* Attachment + page-context chips */}
-      {(attachments.length > 0 || pageCtx || ctxError) && (
+      {(attachments.length > 0 || pageCtx || ctxFailure) && (
         <div className="mb-1.5 flex flex-wrap gap-1.5">
           {pageCtx && (
             <Chip
@@ -155,12 +180,11 @@ export function ChatInput({ disabled, includeContext, onToggleContext, onSubmit 
               onRemove={() => onToggleContext(false)}
             />
           )}
-          {ctxError && (
-            <Chip
-              icon={<Globe className="h-3 w-3" />}
-              label={ctxError}
-              tone="danger"
-              onRemove={() => onToggleContext(false)}
+          {ctxFailure && (
+            <CaptureFailureChip
+              failure={ctxFailure}
+              onGrant={grantAccess}
+              onDismiss={() => onToggleContext(false)}
             />
           )}
           {attachments.map((a) => (
@@ -253,7 +277,7 @@ function Chip({
   icon: React.ReactNode;
   label: string;
   detail?: string;
-  tone?: "info" | "danger";
+  tone?: "info" | "danger" | "warn";
   onRemove?: () => void;
 }) {
   return (
@@ -262,6 +286,8 @@ function Chip({
         "inline-flex max-w-full items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] ring-1",
         tone === "danger"
           ? "bg-[var(--color-danger)]/15 text-[var(--color-danger)] ring-[var(--color-danger)]/40"
+          : tone === "warn"
+          ? "bg-[var(--color-warn)]/15 text-[var(--color-warn)] ring-[var(--color-warn)]/40"
           : tone === "info"
           ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] ring-[var(--color-primary)]/30"
           : "bg-[var(--color-bg-elev-2)] text-[var(--color-text)] ring-[var(--color-border-subtle)]",
@@ -301,4 +327,52 @@ function formatBytes(n: number) {
 
 function truncate(s: string, n: number) {
   return s.length <= n ? s : s.slice(0, n - 1) + "…";
+}
+
+function CaptureFailureChip({
+  failure,
+  onGrant,
+  onDismiss,
+}: {
+  failure: CaptureFailure;
+  onGrant: () => void;
+  onDismiss: () => void;
+}) {
+  if (failure.kind === "permission-required" || failure.kind === "permission-denied") {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-warn)]/15 px-2 py-0.5 text-[11px] text-[var(--color-warn)] ring-1 ring-[var(--color-warn)]/40">
+        <ShieldCheck className="h-3 w-3" />
+        <span>Access needed for this page</span>
+        <button
+          type="button"
+          onClick={onGrant}
+          className="ml-1 rounded-full bg-[var(--color-warn)]/25 px-1.5 py-0.5 text-[10.5px] font-medium hover:bg-[var(--color-warn)]/35"
+        >
+          Grant
+        </button>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="-mr-0.5 rounded-full p-0.5 hover:bg-black/10"
+          aria-label="Dismiss"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      </span>
+    );
+  }
+  const label =
+    failure.kind === "restricted"
+      ? "Can't capture this page (restricted URL)"
+      : failure.kind === "no-tab"
+      ? "No active tab"
+      : failure.message || "Page capture failed";
+  return (
+    <Chip
+      icon={<Globe className="h-3 w-3" />}
+      label={label}
+      tone="danger"
+      onRemove={onDismiss}
+    />
+  );
 }
