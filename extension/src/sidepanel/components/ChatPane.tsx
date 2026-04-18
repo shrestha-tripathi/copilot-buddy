@@ -4,6 +4,7 @@ import { sessionsApi } from "@/shared/api/sessions";
 import { useSessionStore } from "../stores/sessionStore";
 import { useChatStore } from "../stores/chatStore";
 import { sendMessage, resumeStream } from "../api/messages";
+import { captureActiveTabContext, formatPageContext } from "../api/pageContext";
 import { MessageList } from "./MessageList";
 import { ChatInput } from "./ChatInput";
 
@@ -18,6 +19,7 @@ export function ChatPane({ daemonOnline }: Props) {
   const sessions = useSessionStore((s) => s.sessions);
   const usage = useChatStore((s) => (activeId ? s.usagePerSession[activeId] : null));
   const [error, setError] = useState<string | null>(null);
+  const [includeContext, setIncludeContext] = useState(false);
   const inflight = useRef<AbortController | null>(null);
 
   // On session switch, check whether the daemon is mid-turn — if so, resume
@@ -53,11 +55,18 @@ export function ChatPane({ daemonOnline }: Props) {
   const handleSubmit = async (text: string) => {
     if (!activeId) return;
     setError(null);
+
+    let prompt = text;
+    if (includeContext) {
+      const ctx = await captureActiveTabContext();
+      if (ctx) prompt = `${formatPageContext(ctx)}\n\n${text}`;
+    }
+
     inflight.current?.abort();
     const ctrl = new AbortController();
     inflight.current = ctrl;
     try {
-      await sendMessage(api, activeId, text, {
+      await sendMessage(api, activeId, prompt, {
         signal: ctrl.signal,
         onError: setError,
         onDone: (payload) => {
@@ -82,7 +91,12 @@ export function ChatPane({ daemonOnline }: Props) {
       )}
       <MessageList sessionId={activeId} />
       {error && <div className="cb-error">{error}</div>}
-      <ChatInput disabled={!activeId || !daemonOnline} onSubmit={handleSubmit} />
+      <ChatInput
+        disabled={!activeId || !daemonOnline}
+        includeContext={includeContext}
+        onToggleContext={setIncludeContext}
+        onSubmit={handleSubmit}
+      />
     </div>
   );
 }

@@ -2,10 +2,12 @@ import { useState, type FormEvent, type KeyboardEvent } from "react";
 
 interface Props {
   disabled?: boolean;
+  includeContext: boolean;
+  onToggleContext: (next: boolean) => void;
   onSubmit: (text: string) => void;
 }
 
-export function ChatInput({ disabled, onSubmit }: Props) {
+export function ChatInput({ disabled, includeContext, onToggleContext, onSubmit }: Props) {
   const [value, setValue] = useState("");
 
   const submit = (e?: FormEvent) => {
@@ -28,13 +30,27 @@ export function ChatInput({ disabled, onSubmit }: Props) {
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={onKeyDown}
-        placeholder={disabled ? "Daemon offline…" : "Ask Copilot anything (Enter to send, Shift+Enter for newline)"}
+        placeholder={
+          disabled
+            ? "Daemon offline…"
+            : "Ask Copilot anything (Enter to send, Shift+Enter for newline)"
+        }
         rows={3}
         disabled={disabled}
       />
-      <button type="submit" disabled={disabled || !value.trim()}>
-        Send
-      </button>
+      <div className="cb-input__row">
+        <label className="cb-toggle" title="Prepend page URL/title/selection to prompt">
+          <input
+            type="checkbox"
+            checked={includeContext}
+            onChange={(e) => onToggleContext(e.target.checked)}
+          />
+          Include page context
+        </label>
+        <button type="submit" disabled={disabled || !value.trim()}>
+          Send
+        </button>
+      </div>
     </form>
   );
 }

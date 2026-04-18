@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useSettingsStore } from "./stores/settingsStore";
+import { useSessionStore } from "./stores/sessionStore";
 import { TokenOnboarding } from "./components/TokenOnboarding";
 import { SessionPicker } from "./components/SessionPicker";
 import { ChatPane } from "./components/ChatPane";
+import { DaemonOffline } from "./components/DaemonOffline";
 
 interface DaemonStatus {
   reachable: boolean;
@@ -23,11 +25,17 @@ export function App() {
   const loaded = useSettingsStore((s) => s.loaded);
   const settings = useSettingsStore((s) => s.settings);
   const load = useSettingsStore((s) => s.load);
+  const hydrateActive = useSessionStore((s) => s.hydrateActive);
   const [status, setStatus] = useState<DaemonStatus | null>(null);
+  const [probeNonce, setProbeNonce] = useState(0);
 
   useEffect(() => {
     if (!loaded) load();
   }, [loaded, load]);
+
+  useEffect(() => {
+    void hydrateActive();
+  }, [hydrateActive]);
 
   useEffect(() => {
     let cancelled = false;
@@ -39,15 +47,28 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [settings.baseUrl]);
+  }, [settings.baseUrl, probeNonce]);
+
+  const retry = useCallback(() => setProbeNonce((n) => n + 1), []);
 
   if (!loaded) {
-    return <main className="cb-shell"><div className="cb-empty">Loading…</div></main>;
+    return (
+      <main className="cb-shell">
+        <div className="cb-empty">Loading…</div>
+      </main>
+    );
   }
   if (!settings.token) {
     return (
       <main className="cb-shell">
         <TokenOnboarding />
+      </main>
+    );
+  }
+  if (status && !status.reachable) {
+    return (
+      <main className="cb-shell">
+        <DaemonOffline baseUrl={settings.baseUrl} error={status.error} onRetry={retry} />
       </main>
     );
   }

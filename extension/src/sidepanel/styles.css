@@ -245,6 +245,7 @@ code {
 
 .cb-input {
   display: flex;
+  flex-direction: column;
   gap: 8px;
   padding: 12px;
   border-top: 1px solid rgba(127, 127, 127, 0.25);
@@ -253,4 +254,28 @@ code {
   flex: 1;
   resize: vertical;
   min-height: 60px;
+}
+.cb-input__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.cb-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  opacity: 0.85;
+  cursor: pointer;
+}
+
+.cb-codeblock {
+  background: rgba(127, 127, 127, 0.12);
+  border: 1px solid rgba(127, 127, 127, 0.3);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
 }
