@@ -1,0 +1,110 @@
+/**
+ * sendMessage — POSTs to /api/sessions/{id}/messages and dispatches every
+ * SSE event into the chat store. Returns when the stream ends.
+ *
+ * resumeStream — GETs /api/sessions/{id}/response-stream?from=N to pick up
+ * an in-flight response after a side-panel reopen.
+ */
+
+import { SSE_EVENTS } from "@/shared/api/events";
+import type { Api } from "@/shared/api/client";
+import { useChatStore, type Step, type UsageInfo } from "../stores/chatStore";
+
+interface DonePayload {
+  content_length?: number;
+  session_name?: string;
+  updated_at?: string;
+}
+
+interface DispatchOpts {
+  onDone?: (payload: DonePayload) => void;
+  onError?: (msg: string) => void;
+  onTitleChanged?: (title: string) => void;
+}
+
+function buildEventDispatcher(
+  sessionId: string,
+  opts: DispatchOpts,
+): (evt: string, data: unknown) => void {
+  const chat = useChatStore.getState();
+  let assistantMsgId = "";
+
+  return (evt, data) => {
+    const d = data as Record<string, unknown>;
+    switch (evt) {
+      case SSE_EVENTS.DELTA:
+        if (typeof d.content === "string") chat.appendDelta(sessionId, d.content);
+        break;
+      case SSE_EVENTS.STEP:
+        if (typeof d.title === "string") {
+          chat.addStep(sessionId, {
+            title: d.title,
+            detail: typeof d.detail === "string" ? d.detail : undefined,
+          } as Step);
+        }
+        break;
+      case SSE_EVENTS.USAGE_INFO:
+        chat.setUsage(sessionId, {
+          tokenLimit: Number(d.tokenLimit ?? 0),
+          currentTokens: Number(d.currentTokens ?? 0),
+          messagesLength: Number(d.messagesLength ?? 0),
+        } satisfies UsageInfo);
+        break;
+      case SSE_EVENTS.TURN_DONE:
+        assistantMsgId = String(d.message_id ?? d.messageId ?? "");
+        chat.finalizeAssistantMessage(sessionId, assistantMsgId);
+        break;
+      case SSE_EVENTS.TITLE_CHANGED:
+        if (typeof d.title === "string") opts.onTitleChanged?.(d.title);
+        break;
+      case SSE_EVENTS.DONE:
+        chat.setStreaming(sessionId, false);
+        opts.onDone?.(d as DonePayload);
+        break;
+      case SSE_EVENTS.ERROR:
+        chat.setStreaming(sessionId, false);
+        opts.onError?.(String(d.error ?? "unknown error"));
+        break;
+      default:
+        // mode_changed, elicitation, ask_user, pending_messages — ignored
+        // for now; wired up by p5-ext-elicitation in a follow-up commit.
+        break;
+    }
+  };
+}
+
+export async function sendMessage(
+  api: Api,
+  sessionId: string,
+  content: string,
+  opts: DispatchOpts & { isNewSession?: boolean; signal?: AbortSignal } = {},
+): Promise<void> {
+  const chat = useChatStore.getState();
+  chat.addMessage(sessionId, {
+    id: crypto.randomUUID(),
+    role: "user",
+    content,
+    createdAt: Date.now(),
+  });
+  chat.setStreaming(sessionId, true);
+
+  await api.stream(`/api/sessions/${sessionId}/messages`, buildEventDispatcher(sessionId, opts), {
+    method: "POST",
+    body: { content, is_new_session: !!opts.isNewSession },
+    signal: opts.signal,
+  });
+}
+
+export async function resumeStream(
+  api: Api,
+  sessionId: string,
+  fromIndex: number,
+  opts: DispatchOpts & { signal?: AbortSignal } = {},
+): Promise<void> {
+  useChatStore.getState().setStreaming(sessionId, true);
+  await api.stream(
+    `/api/sessions/${sessionId}/response-stream?from=${fromIndex}`,
+    buildEventDispatcher(sessionId, opts),
+    { method: "GET", signal: opts.signal },
+  );
+}

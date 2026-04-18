@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
+import { useSettingsStore } from "./stores/settingsStore";
+import { TokenOnboarding } from "./components/TokenOnboarding";
+import { SessionPicker } from "./components/SessionPicker";
+import { ChatPane } from "./components/ChatPane";
 
 interface DaemonStatus {
   reachable: boolean;
   error?: string;
 }
-
-const DEFAULT_DAEMON_URL = "http://127.0.0.1:8770";
 
 async function probeDaemon(baseUrl: string): Promise<DaemonStatus> {
   try {
@@ -18,41 +20,57 @@ async function probeDaemon(baseUrl: string): Promise<DaemonStatus> {
 }
 
 export function App() {
+  const loaded = useSettingsStore((s) => s.loaded);
+  const settings = useSettingsStore((s) => s.settings);
+  const load = useSettingsStore((s) => s.load);
   const [status, setStatus] = useState<DaemonStatus | null>(null);
 
   useEffect(() => {
+    if (!loaded) load();
+  }, [loaded, load]);
+
+  useEffect(() => {
     let cancelled = false;
+    setStatus(null);
     (async () => {
-      const s = await probeDaemon(DEFAULT_DAEMON_URL);
+      const s = await probeDaemon(settings.baseUrl);
       if (!cancelled) setStatus(s);
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [settings.baseUrl]);
+
+  if (!loaded) {
+    return <main className="cb-shell"><div className="cb-empty">Loading…</div></main>;
+  }
+  if (!settings.token) {
+    return (
+      <main className="cb-shell">
+        <TokenOnboarding />
+      </main>
+    );
+  }
+
+  const reachable = status?.reachable ?? false;
 
   return (
     <main className="cb-shell">
       <header className="cb-header">
         <h1>Copilot Buddy</h1>
         <span
-          className={`cb-status ${
-            status?.reachable ? "cb-status--ok" : "cb-status--down"
-          }`}
+          className={`cb-status ${reachable ? "cb-status--ok" : "cb-status--down"}`}
+          title={status?.error}
         >
           {status === null
             ? "checking…"
-            : status.reachable
+            : reachable
               ? "daemon online"
-              : `daemon offline${status.error ? ` (${status.error})` : ""}`}
+              : `offline${status.error ? ` (${status.error})` : ""}`}
         </span>
       </header>
-      <section className="cb-body">
-        <p>
-          Side panel scaffold is alive. Chat UI lands in P5 — for now this view
-          just probes the local Go daemon at <code>{DEFAULT_DAEMON_URL}</code>.
-        </p>
-      </section>
+      <SessionPicker />
+      <ChatPane daemonOnline={reachable} />
     </main>
   );
 }
