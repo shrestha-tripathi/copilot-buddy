@@ -34,7 +34,7 @@ export function ChatPane({ daemonOnline }: Props) {
         if (status.active) {
           const ctrl = new AbortController();
           inflight.current = ctrl;
-          resumeStream(api, activeId, status.events_count ?? 0, {
+          resumeStream(api, activeId, status.events ?? 0, {
             signal: ctrl.signal,
             onError: (msg) => setError(msg),
           }).catch((err) => {

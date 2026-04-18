@@ -36,7 +36,11 @@ export interface SessionListResponse {
 
 export interface ResponseStatus {
   active: boolean;
-  events_count?: number;
+  status?: string;
+  events?: number;
+  error?: string | null;
+  completed_at?: string | null;
+  content_length?: number;
 }
 
 export const sessionsApi = {
