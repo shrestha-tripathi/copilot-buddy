@@ -10,6 +10,7 @@ import (
 	copilot "github.com/github/copilot-sdk/go"
 	"github.com/sanchar10/copilot-buddy/backend/internal/config"
 	"github.com/sanchar10/copilot-buddy/backend/internal/models"
+	"github.com/sanchar10/copilot-buddy/backend/internal/storage"
 )
 
 // CopilotService is the top-level orchestrator. It owns:
@@ -17,11 +18,9 @@ import (
 //     and any operation that doesn't need a CWD;
 //   - a pool of SessionClient instances keyed by session id, evicted
 //     after a configurable idle TTL;
-//   - the BufferManager that holds in-flight ResponseBuffers.
-//
-// The split between main-client and per-session-clients mirrors
-// copilot-console: the main client is cheap, always-on, and never tied
-// to a working directory.
+//   - the BufferManager that holds in-flight ResponseBuffers;
+//   - references to the persistent agent + MCP catalogues so that
+//     session spin-up can merge global defaults.
 type CopilotService struct {
 	mu       sync.RWMutex
 	clients  map[string]*SessionClient
@@ -31,16 +30,20 @@ type CopilotService struct {
 	mainClient *copilot.Client
 
 	Buffers *BufferManager
+	Agents  *storage.AgentStore
+	MCP     *storage.MCPStore
 
 	stop chan struct{}
 }
 
 // NewCopilotService constructs the service. Callers should defer Shutdown.
-func NewCopilotService() *CopilotService {
+func NewCopilotService(agents *storage.AgentStore, mcp *storage.MCPStore) *CopilotService {
 	return &CopilotService{
 		clients: map[string]*SessionClient{},
 		idleTTL: time.Duration(config.IdleSessionTTLMinutes) * time.Minute,
 		Buffers: NewBufferManager(time.Duration(config.ResponseBufferTTLMinutes) * time.Minute),
+		Agents:  agents,
+		MCP:     mcp,
 		stop:    make(chan struct{}),
 	}
 }
@@ -95,9 +98,10 @@ func (s *CopilotService) ListModels(ctx context.Context) ([]copilot.ModelInfo, e
 	return c.ListModels(ctx)
 }
 
-// GetOrCreateClient returns the SessionClient for sess. If one exists
-// with a different CWD, it is torn down and replaced — the SDK session
-// config is fixed at create-time so we cannot just mutate.
+// GetOrCreateClient returns the SessionClient for sess. If any of the
+// cacheable session fields (CWD, model, reasoning, agent) change, the
+// existing client is torn down and replaced — SDK session config is
+// fixed at create-time so we can't just mutate in place.
 func (s *CopilotService) GetOrCreateClient(sess *models.Session) *SessionClient {
 	cwd := sess.CWD
 	if cwd == "" {
@@ -108,19 +112,87 @@ func (s *CopilotService) GetOrCreateClient(sess *models.Session) *SessionClient 
 		model = config.DefaultModel
 	}
 
+	// Merge global MCP catalogue with session-level overrides.
+	mcpMap := map[string]copilot.MCPServerConfig{}
+	if s.MCP != nil {
+		if all, err := s.MCP.All(); err == nil {
+			for k, v := range all {
+				mcpMap[k] = copilot.MCPServerConfig(v)
+			}
+		}
+	}
+	for k, v := range sess.MCPServers {
+		if asMap, ok := v.(map[string]any); ok {
+			mcpMap[k] = copilot.MCPServerConfig(asMap)
+		}
+	}
+
+	// Pull all global agents so the session can Activate one by name.
+	var customAgents []copilot.CustomAgentConfig
+	if s.Agents != nil {
+		if list, err := s.Agents.List(); err == nil {
+			for _, a := range list {
+				cfg := copilot.CustomAgentConfig{
+					Name:        a.Name,
+					Description: a.Description,
+					Prompt:      a.Prompt,
+					Tools:       a.Tools,
+				}
+				if a.Infer {
+					v := true
+					cfg.Infer = &v
+				}
+				if len(a.MCPServers) > 0 {
+					cfg.MCPServers = map[string]copilot.MCPServerConfig{}
+					for k, v := range a.MCPServers {
+						if asMap, ok := v.(map[string]any); ok {
+							cfg.MCPServers[k] = copilot.MCPServerConfig(asMap)
+						}
+					}
+				}
+				customAgents = append(customAgents, cfg)
+			}
+		}
+	}
+
+	opts := SessionClientOpts{
+		CWD:             cwd,
+		Model:           model,
+		ReasoningEffort: sess.ReasoningEffort,
+		Agent:           sess.Agent,
+		MCPServers:      mcpMap,
+		CustomAgents:    customAgents,
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if existing, ok := s.clients[sess.ID]; ok {
-		if existing.CWD == cwd && existing.model == model {
+		if existing.CWD == cwd &&
+			existing.model == model &&
+			existing.reasoningEffort == sess.ReasoningEffort &&
+			existing.agent == sess.Agent {
 			return existing
 		}
-		// CWD or model changed — recycle.
+		// Config mutated — recycle.
 		existing.Stop()
 		delete(s.clients, sess.ID)
 	}
-	c := NewSessionClient(sess.ID, cwd, model)
+	c := NewSessionClient(sess.ID, opts)
 	s.clients[sess.ID] = c
 	return c
+}
+
+// RecycleClient forcibly evicts the session's cached SDK client so the
+// next message starts fresh with whatever opts GetOrCreateClient now
+// computes. Used by PATCH /sessions/{id} when mcp/custom_agents change
+// (those aren't part of the identity-equality check in GetOrCreate).
+func (s *CopilotService) RecycleClient(sessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c, ok := s.clients[sessionID]; ok {
+		c.Stop()
+		delete(s.clients, sessionID)
+	}
 }
 
 // SendMessageBackground starts the agent turn in a goroutine and returns

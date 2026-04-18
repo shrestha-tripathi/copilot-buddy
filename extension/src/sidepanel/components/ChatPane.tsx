@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+import { AlertCircle } from "lucide-react";
 import { useApi } from "../api/useApi";
 import { sessionsApi } from "@/shared/api/sessions";
 import { useSessionStore } from "../stores/sessionStore";
 import { useChatStore } from "../stores/chatStore";
 import { sendMessage, resumeStream } from "../api/messages";
-import { captureActiveTabContext, formatPageContext } from "../api/pageContext";
+import { formatPageContext, type PageContext } from "../api/pageContext";
 import { MessageList } from "./MessageList";
-import { ChatInput } from "./ChatInput";
+import { ChatInput, type Attachment } from "./ChatInput";
 import { ElicitationModal } from "./ElicitationModal";
 import { AskUserModal } from "./AskUserModal";
+import { Button } from "../ui/Button";
 
 interface Props {
   daemonOnline: boolean;
@@ -28,12 +31,11 @@ export function ChatPane({ daemonOnline }: Props) {
   );
   const setPendingElicitation = useChatStore((s) => s.setPendingElicitation);
   const setPendingAskUser = useChatStore((s) => s.setPendingAskUser);
+  const streaming = useChatStore((s) => s.getStreaming(activeId));
   const [error, setError] = useState<string | null>(null);
   const [includeContext, setIncludeContext] = useState(false);
   const inflight = useRef<AbortController | null>(null);
 
-  // On session switch, check whether the daemon is mid-turn — if so, resume
-  // the SSE stream so we keep streaming any in-flight response.
   useEffect(() => {
     if (!activeId || !daemonOnline) return;
     let cancelled = false;
@@ -46,15 +48,13 @@ export function ChatPane({ daemonOnline }: Props) {
           inflight.current = ctrl;
           resumeStream(api, activeId, status.events ?? 0, {
             signal: ctrl.signal,
-            onError: (msg) => setError(msg),
+            onError: setError,
           }).catch((err) => {
             if ((err as Error).name !== "AbortError") setError((err as Error).message);
           });
         }
       })
-      .catch(() => {
-        /* status endpoint failures are non-fatal */
-      });
+      .catch(() => {});
     return () => {
       cancelled = true;
       inflight.current?.abort();
@@ -62,15 +62,29 @@ export function ChatPane({ daemonOnline }: Props) {
     };
   }, [activeId, api, daemonOnline]);
 
-  const handleSubmit = async (text: string) => {
+  const handleSubmit = async (
+    text: string,
+    extras: { attachments: Attachment[]; pageContext: PageContext | null },
+  ) => {
     if (!activeId) return;
     setError(null);
 
-    let prompt = text;
-    if (includeContext) {
-      const ctx = await captureActiveTabContext();
-      if (ctx) prompt = `${formatPageContext(ctx)}\n\n${text}`;
+    const parts: string[] = [];
+    if (includeContext && extras.pageContext) {
+      parts.push(formatPageContext(extras.pageContext));
     }
+    for (const a of extras.attachments) {
+      if (a.kind === "text") {
+        parts.push(`<!-- attachment: ${a.name} (${a.size} bytes) -->\n\`\`\`\n${a.content}\n\`\`\``);
+      } else {
+        parts.push(
+          `<!-- attached image: ${a.name} (${a.size} bytes) — not inlined; describe if relevant -->`,
+        );
+      }
+    }
+    if (text) parts.push(text);
+    const prompt = parts.join("\n\n").trim();
+    if (!prompt) return;
 
     inflight.current?.abort();
     const ctrl = new AbortController();
@@ -78,29 +92,59 @@ export function ChatPane({ daemonOnline }: Props) {
     try {
       await sendMessage(api, activeId, prompt, {
         signal: ctrl.signal,
-        onError: setError,
+        onError: (msg) => {
+          setError(msg);
+          toast.error(msg);
+        },
         onDone: (payload) => {
           if (payload.session_name) {
             const cur = sessions.find((s) => s.id === activeId);
-            if (cur) upsert({ ...cur, name: payload.session_name });
+            if (cur && !cur.name) upsert({ ...cur, name: payload.session_name });
           }
         },
       });
     } catch (err) {
-      if ((err as Error).name !== "AbortError") setError((err as Error).message);
+      if ((err as Error).name !== "AbortError") {
+        setError((err as Error).message);
+        toast.error((err as Error).message);
+      }
     }
   };
 
+  const stopStreaming = () => {
+    inflight.current?.abort();
+    inflight.current = null;
+  };
+
   return (
-    <div className="cb-chat">
-      {usage && (
-        <div className="cb-usage">
-          {Math.round(usage.currentTokens)} / {Math.round(usage.tokenLimit)} tokens
-          ({usage.messagesLength} msgs)
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex items-center justify-between px-3 py-1 text-[11px] text-[var(--color-text-dim)]">
+        <div className="flex items-center gap-2">
+          {streaming.isStreaming && (
+            <span className="inline-flex items-center gap-1.5 text-[var(--color-primary)]">
+              <span className="cb-spinner" /> streaming…
+            </span>
+          )}
+          {!streaming.isStreaming && error && (
+            <span className="inline-flex items-center gap-1.5 text-[var(--color-danger)]">
+              <AlertCircle className="h-3 w-3" /> {error}
+            </span>
+          )}
         </div>
-      )}
+        <div className="flex items-center gap-2">
+          {usage && (
+            <span title={`${usage.messagesLength} messages in context`}>
+              {Math.round(usage.currentTokens)}/{Math.round(usage.tokenLimit)} tok
+            </span>
+          )}
+          {streaming.isStreaming && (
+            <Button size="sm" variant="outline" onClick={stopStreaming}>
+              Stop
+            </Button>
+          )}
+        </div>
+      </div>
       <MessageList sessionId={activeId} />
-      {error && <div className="cb-error">{error}</div>}
       <ChatInput
         disabled={!activeId || !daemonOnline}
         includeContext={includeContext}
@@ -118,7 +162,7 @@ export function ChatPane({ daemonOnline }: Props) {
                 content,
               });
             } catch (e) {
-              setError((e as Error).message);
+              toast.error((e as Error).message);
             }
             setPendingElicitation(activeId, null);
           }}
@@ -129,7 +173,7 @@ export function ChatPane({ daemonOnline }: Props) {
                 action: "decline",
               });
             } catch (e) {
-              setError((e as Error).message);
+              toast.error((e as Error).message);
             }
             setPendingElicitation(activeId, null);
           }}
@@ -140,7 +184,7 @@ export function ChatPane({ daemonOnline }: Props) {
                 action: "cancel",
               });
             } catch (e) {
-              setError((e as Error).message);
+              toast.error((e as Error).message);
             }
             setPendingElicitation(activeId, null);
           }}
@@ -157,7 +201,7 @@ export function ChatPane({ daemonOnline }: Props) {
                 was_freeform: wasFreeform,
               });
             } catch (e) {
-              setError((e as Error).message);
+              toast.error((e as Error).message);
             }
             setPendingAskUser(activeId, null);
           }}
@@ -169,7 +213,7 @@ export function ChatPane({ daemonOnline }: Props) {
                 was_freeform: false,
               });
             } catch (e) {
-              setError((e as Error).message);
+              toast.error((e as Error).message);
             }
             setPendingAskUser(activeId, null);
           }}

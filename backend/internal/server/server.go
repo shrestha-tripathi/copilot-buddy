@@ -45,6 +45,14 @@ func New(addr string, allowedOrigins []string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	agents, err := storage.NewAgentStore()
+	if err != nil {
+		return nil, err
+	}
+	mcp, err := storage.NewMCPStore()
+	if err != nil {
+		return nil, err
+	}
 
 	token, isNew, err := loadOrCreateToken()
 	if err != nil {
@@ -58,10 +66,10 @@ func New(addr string, allowedOrigins []string) (*Server, error) {
 		fmt.Println()
 	}
 
-	svc := services.NewCopilotService()
+	svc := services.NewCopilotService(agents, mcp)
 
 	mux := http.NewServeMux()
-	routers.Register(mux, svc, store)
+	routers.Register(mux, svc, store, agents, mcp)
 
 	// Middleware chain: AccessLog → Recover → CORS → Bearer → mux
 	var handler http.Handler = mux

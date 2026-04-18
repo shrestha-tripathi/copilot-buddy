@@ -23,8 +23,14 @@ import (
 
 // Register wires every route onto mux. Routes use Go 1.22 pattern syntax
 // ("METHOD /path/{var}") and r.PathValue for parameters.
-func Register(mux *http.ServeMux, svc *services.CopilotService, store *storage.Store) {
-	r := &router{svc: svc, store: store}
+func Register(
+	mux *http.ServeMux,
+	svc *services.CopilotService,
+	store *storage.Store,
+	agents *storage.AgentStore,
+	mcp *storage.MCPStore,
+) {
+	r := &router{svc: svc, store: store, agents: agents, mcp: mcp}
 
 	mux.HandleFunc("GET "+config.APIPrefix+"/health", r.health)
 	mux.HandleFunc("GET "+config.APIPrefix+"/models", r.listModels)
@@ -32,6 +38,7 @@ func Register(mux *http.ServeMux, svc *services.CopilotService, store *storage.S
 	mux.HandleFunc("GET "+config.APIPrefix+"/sessions", r.listSessions)
 	mux.HandleFunc("POST "+config.APIPrefix+"/sessions", r.createSession)
 	mux.HandleFunc("GET "+config.APIPrefix+"/sessions/{id}", r.getSession)
+	mux.HandleFunc("PATCH "+config.APIPrefix+"/sessions/{id}", r.patchSession)
 	mux.HandleFunc("DELETE "+config.APIPrefix+"/sessions/{id}", r.deleteSession)
 
 	mux.HandleFunc("POST "+config.APIPrefix+"/sessions/{id}/messages", r.sendMessage)
@@ -39,11 +46,22 @@ func Register(mux *http.ServeMux, svc *services.CopilotService, store *storage.S
 	mux.HandleFunc("GET "+config.APIPrefix+"/sessions/{id}/response-status", r.responseStatus)
 	mux.HandleFunc("POST "+config.APIPrefix+"/sessions/{id}/elicitation-response", r.elicitationResponse)
 	mux.HandleFunc("POST "+config.APIPrefix+"/sessions/{id}/user-input-response", r.userInputResponse)
+
+	// Global catalogues — agents + MCP servers.
+	mux.HandleFunc("GET "+config.APIPrefix+"/agents", r.listAgents)
+	mux.HandleFunc("POST "+config.APIPrefix+"/agents", r.saveAgent)
+	mux.HandleFunc("DELETE "+config.APIPrefix+"/agents/{name}", r.deleteAgent)
+
+	mux.HandleFunc("GET "+config.APIPrefix+"/mcp-servers", r.listMCP)
+	mux.HandleFunc("POST "+config.APIPrefix+"/mcp-servers", r.saveMCP)
+	mux.HandleFunc("DELETE "+config.APIPrefix+"/mcp-servers/{name}", r.deleteMCP)
 }
 
 type router struct {
-	svc   *services.CopilotService
-	store *storage.Store
+	svc    *services.CopilotService
+	store  *storage.Store
+	agents *storage.AgentStore
+	mcp    *storage.MCPStore
 }
 
 // ----------------------------------------------------------------------
@@ -71,10 +89,13 @@ func (r *router) listModels(w http.ResponseWriter, req *http.Request) {
 // ----------------------------------------------------------------------
 
 type createSessionReq struct {
-	Name          string `json:"name"`
-	Model         string `json:"model"`
-	CWD           string `json:"cwd"`
-	SystemMessage string `json:"system_message"`
+	Name            string         `json:"name"`
+	Model           string         `json:"model"`
+	ReasoningEffort string         `json:"reasoning_effort"`
+	CWD             string         `json:"cwd"`
+	SystemMessage   string         `json:"system_message"`
+	Agent           string         `json:"agent"`
+	MCPServers      map[string]any `json:"mcp_servers"`
 }
 
 func (r *router) createSession(w http.ResponseWriter, req *http.Request) {
@@ -85,14 +106,17 @@ func (r *router) createSession(w http.ResponseWriter, req *http.Request) {
 	}
 	now := time.Now().UTC()
 	sess := &models.Session{
-		ID:            uuid.NewString(),
-		Name:          firstNonEmpty(body.Name, "New chat"),
-		NameSet:       body.Name != "",
-		Model:         firstNonEmpty(body.Model, config.DefaultModel),
-		CWD:           firstNonEmpty(body.CWD, config.DefaultCWD()),
-		SystemMessage: body.SystemMessage,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		ID:              uuid.NewString(),
+		Name:            firstNonEmpty(body.Name, "New chat"),
+		NameSet:         body.Name != "",
+		Model:           firstNonEmpty(body.Model, config.DefaultModel),
+		ReasoningEffort: body.ReasoningEffort,
+		CWD:             firstNonEmpty(body.CWD, config.DefaultCWD()),
+		SystemMessage:   body.SystemMessage,
+		Agent:           body.Agent,
+		MCPServers:      body.MCPServers,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}
 	if err := r.store.Save(sess); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -134,6 +158,70 @@ func (r *router) deleteSession(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// patchSession mutates a subset of session fields. Any field that can
+// trigger a live SDK-session reconfiguration (model, reasoning, agent,
+// system message, mcp_servers) causes the cached SessionClient to be
+// recycled so the next message re-creates with the new config.
+func (r *router) patchSession(w http.ResponseWriter, req *http.Request) {
+	id := req.PathValue("id")
+	sess, err := r.store.Get(id)
+	if errors.Is(err, storage.ErrNotFound) {
+		http.NotFound(w, req)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	var body struct {
+		Name            *string         `json:"name"`
+		Model           *string         `json:"model"`
+		ReasoningEffort *string         `json:"reasoning_effort"`
+		SystemMessage   *string         `json:"system_message"`
+		Agent           *string         `json:"agent"`
+		MCPServers      *map[string]any `json:"mcp_servers"`
+	}
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	needRecycle := false
+	if body.Name != nil {
+		sess.Name = *body.Name
+		sess.NameSet = *body.Name != ""
+	}
+	if body.Model != nil && *body.Model != sess.Model {
+		sess.Model = *body.Model
+		needRecycle = true
+	}
+	if body.ReasoningEffort != nil && *body.ReasoningEffort != sess.ReasoningEffort {
+		sess.ReasoningEffort = *body.ReasoningEffort
+		needRecycle = true
+	}
+	if body.SystemMessage != nil && *body.SystemMessage != sess.SystemMessage {
+		sess.SystemMessage = *body.SystemMessage
+		needRecycle = true
+	}
+	if body.Agent != nil && *body.Agent != sess.Agent {
+		sess.Agent = *body.Agent
+		needRecycle = true
+	}
+	if body.MCPServers != nil {
+		sess.MCPServers = *body.MCPServers
+		needRecycle = true
+	}
+	sess.UpdatedAt = time.Now().UTC()
+	if err := r.store.Save(sess); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if needRecycle {
+		r.svc.RecycleClient(sess.ID)
+	}
+	writeJSON(w, http.StatusOK, sess)
 }
 
 // ----------------------------------------------------------------------
@@ -335,4 +423,99 @@ func errEOFLike(err error) error {
 		return err
 	}
 	return nil
+}
+
+// ----------------------------------------------------------------------
+// agents CRUD (global catalogue)
+// ----------------------------------------------------------------------
+
+func (r *router) listAgents(w http.ResponseWriter, _ *http.Request) {
+list, err := r.agents.List()
+if err != nil {
+writeError(w, http.StatusInternalServerError, err)
+return
+}
+if list == nil {
+list = []models.CustomAgent{}
+}
+writeJSON(w, http.StatusOK, map[string]any{"agents": list})
+}
+
+func (r *router) saveAgent(w http.ResponseWriter, req *http.Request) {
+var body models.CustomAgent
+if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+writeError(w, http.StatusBadRequest, err)
+return
+}
+if body.Name == "" {
+writeError(w, http.StatusBadRequest, fmt.Errorf("name required"))
+return
+}
+if err := r.agents.Save(body); err != nil {
+writeError(w, http.StatusInternalServerError, err)
+return
+}
+writeJSON(w, http.StatusOK, body)
+}
+
+func (r *router) deleteAgent(w http.ResponseWriter, req *http.Request) {
+name := req.PathValue("name")
+if err := r.agents.Delete(name); err != nil {
+if errors.Is(err, storage.ErrAgentNotFound) {
+http.NotFound(w, req)
+return
+}
+writeError(w, http.StatusInternalServerError, err)
+return
+}
+w.WriteHeader(http.StatusNoContent)
+}
+
+// ----------------------------------------------------------------------
+// mcp-servers CRUD (global catalogue)
+// ----------------------------------------------------------------------
+
+func (r *router) listMCP(w http.ResponseWriter, _ *http.Request) {
+all, err := r.mcp.All()
+if err != nil {
+writeError(w, http.StatusInternalServerError, err)
+return
+}
+if all == nil {
+all = map[string]map[string]any{}
+}
+writeJSON(w, http.StatusOK, map[string]any{"servers": all})
+}
+
+func (r *router) saveMCP(w http.ResponseWriter, req *http.Request) {
+var body struct {
+Name   string         `json:"name"`
+Config map[string]any `json:"config"`
+}
+if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+writeError(w, http.StatusBadRequest, err)
+return
+}
+if body.Name == "" || body.Config == nil {
+writeError(w, http.StatusBadRequest, fmt.Errorf("name and config required"))
+return
+}
+if err := r.mcp.Save(body.Name, body.Config); err != nil {
+writeError(w, http.StatusInternalServerError, err)
+return
+}
+writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (r *router) deleteMCP(w http.ResponseWriter, req *http.Request) {
+name := req.PathValue("name")
+if err := r.mcp.Delete(name); err != nil {
+if errors.Is(err, storage.ErrMCPNotFound) {
+http.NotFound(w, req)
+return
+}
+writeError(w, http.StatusInternalServerError, err)
+return
+}
+w.WriteHeader(http.StatusNoContent)
 }

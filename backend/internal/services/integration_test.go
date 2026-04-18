@@ -25,7 +25,7 @@ func TestRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	svc := services.NewCopilotService()
+	svc := services.NewCopilotService(nil, nil)
 	if err := svc.Start(ctx); err != nil {
 		t.Fatalf("svc.Start: %v", err)
 	}

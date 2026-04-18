@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
+import { Toaster } from "sonner";
 import { useSettingsStore } from "./stores/settingsStore";
 import { useSessionStore } from "./stores/sessionStore";
 import { TokenOnboarding } from "./components/TokenOnboarding";
 import { SessionPicker } from "./components/SessionPicker";
 import { ChatPane } from "./components/ChatPane";
 import { DaemonOffline } from "./components/DaemonOffline";
+import { Header } from "./components/Header";
 
 interface DaemonStatus {
   reachable: boolean;
@@ -44,31 +46,52 @@ export function App() {
       const s = await probeDaemon(settings.baseUrl);
       if (!cancelled) setStatus(s);
     })();
+    const t = setInterval(async () => {
+      const s = await probeDaemon(settings.baseUrl);
+      if (!cancelled) setStatus(s);
+    }, 15000);
     return () => {
       cancelled = true;
+      clearInterval(t);
     };
   }, [settings.baseUrl, probeNonce]);
 
   const retry = useCallback(() => setProbeNonce((n) => n + 1), []);
 
+  const toaster = (
+    <Toaster
+      position="top-right"
+      theme="dark"
+      toastOptions={{
+        style: {
+          background: "var(--color-bg-elev)",
+          border: "1px solid var(--color-border)",
+          color: "var(--color-text)",
+        },
+      }}
+    />
+  );
+
   if (!loaded) {
     return (
-      <main className="cb-shell">
-        <div className="cb-empty">Loading…</div>
+      <main className="flex h-full items-center justify-center text-[var(--color-text-muted)]">
+        Loading…
       </main>
     );
   }
   if (!settings.token) {
     return (
-      <main className="cb-shell">
+      <main className="flex h-full flex-col">
         <TokenOnboarding />
+        {toaster}
       </main>
     );
   }
   if (status && !status.reachable) {
     return (
-      <main className="cb-shell">
+      <main className="flex h-full flex-col">
         <DaemonOffline baseUrl={settings.baseUrl} error={status.error} onRetry={retry} />
+        {toaster}
       </main>
     );
   }
@@ -76,25 +99,14 @@ export function App() {
   const reachable = status?.reachable ?? false;
 
   return (
-    <main className="cb-shell">
-      <header className="cb-header">
-        <div className="cb-header__brand">
-          <div className="cb-header__logo">CB</div>
-          <h1>Copilot Buddy</h1>
-        </div>
-        <span
-          className={`cb-status ${reachable ? "cb-status--ok" : "cb-status--down"}`}
-          title={status?.error}
-        >
-          {status === null
-            ? "checking"
-            : reachable
-              ? "online"
-              : "offline"}
-        </span>
-      </header>
+    <main className="flex h-full flex-col bg-[var(--color-bg)]">
+      <Header
+        status={status === null ? "checking" : reachable ? "online" : "offline"}
+        statusDetail={status?.error}
+      />
       <SessionPicker />
       <ChatPane daemonOnline={reachable} />
+      {toaster}
     </main>
   );
 }

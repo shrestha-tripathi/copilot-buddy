@@ -27,7 +27,12 @@ type SessionClient struct {
 
 	client  *copilot.Client
 	session *copilot.Session
-	model   string
+
+	model           string
+	reasoningEffort string
+	agent           string
+	mcpServers      map[string]copilot.MCPServerConfig
+	customAgents    []copilot.CustomAgentConfig
 
 	mu           sync.Mutex
 	lastActivity time.Time
@@ -47,15 +52,30 @@ type SessionClient struct {
 	Pending *pendingRequests
 }
 
+// SessionClientOpts is what GetOrCreateClient passes in to fully
+// describe the SDK session configuration.
+type SessionClientOpts struct {
+	CWD             string
+	Model           string
+	ReasoningEffort string
+	Agent           string
+	MCPServers      map[string]copilot.MCPServerConfig
+	CustomAgents    []copilot.CustomAgentConfig
+}
+
 // NewSessionClient does NOT contact the SDK — that happens lazily in
 // ensureStarted.
-func NewSessionClient(sessionID, cwd, model string) *SessionClient {
+func NewSessionClient(sessionID string, opts SessionClientOpts) *SessionClient {
 	return &SessionClient{
-		SessionID:    sessionID,
-		CWD:          cwd,
-		model:        model,
-		lastActivity: time.Now(),
-		Pending:      newPendingRequests(),
+		SessionID:       sessionID,
+		CWD:             opts.CWD,
+		model:           opts.Model,
+		reasoningEffort: opts.ReasoningEffort,
+		agent:           opts.Agent,
+		mcpServers:      opts.MCPServers,
+		customAgents:    opts.CustomAgents,
+		lastActivity:    time.Now(),
+		Pending:         newPendingRequests(),
 	}
 }
 
@@ -90,13 +110,17 @@ func (c *SessionClient) ensureStarted(ctx context.Context, systemMessage string)
 	}
 
 	cfg := &copilot.SessionConfig{
-		SessionID:           c.SessionID,
-		Model:               c.model,
-		Streaming:           true,
-		WorkingDirectory:    c.CWD,
-		OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+		SessionID:            c.SessionID,
+		Model:                c.model,
+		ReasoningEffort:      c.reasoningEffort,
+		Streaming:            true,
+		WorkingDirectory:     c.CWD,
+		OnPermissionRequest:  copilot.PermissionHandler.ApproveAll,
 		OnElicitationRequest: c.handleElicitation,
 		OnUserInputRequest:   c.handleUserInput,
+		MCPServers:           c.mcpServers,
+		CustomAgents:         c.customAgents,
+		Agent:                c.agent,
 	}
 	if systemMessage != "" {
 		cfg.SystemMessage = &copilot.SystemMessageConfig{

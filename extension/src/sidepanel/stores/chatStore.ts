@@ -60,7 +60,24 @@ const EMPTY_STREAM: StreamingState = {
 export const DELTA_BATCH_MS = 50;
 
 const deltaBuffers: Record<string, string[]> = {};
-const flushTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+const flushHandles: Record<string, number> = {};
+
+// Prefer requestAnimationFrame for silk-smooth streaming; fall back to
+// setTimeout(16ms) in non-DOM contexts (tests).
+const scheduleFlush = (fn: FrameRequestCallback): number => {
+  if (typeof requestAnimationFrame !== "undefined") {
+    return requestAnimationFrame(fn);
+  }
+  return setTimeout(() => fn(performance.now()), 16) as unknown as number;
+};
+
+const cancelFlush = (handle: number) => {
+  if (typeof cancelAnimationFrame !== "undefined") {
+    cancelAnimationFrame(handle);
+  } else {
+    clearTimeout(handle as unknown as ReturnType<typeof setTimeout>);
+  }
+};
 
 interface ChatState {
   messagesPerSession: Record<string, Message[]>;
@@ -84,9 +101,9 @@ interface ChatState {
 }
 
 function flushBuffer(sessionId: string) {
-  if (flushTimers[sessionId]) {
-    clearTimeout(flushTimers[sessionId]);
-    delete flushTimers[sessionId];
+  if (flushHandles[sessionId]) {
+    cancelFlush(flushHandles[sessionId]);
+    delete flushHandles[sessionId];
   }
   const buf = deltaBuffers[sessionId];
   if (!buf || buf.length === 0) return;
@@ -134,9 +151,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })),
 
   resetStreaming: (sessionId) => {
-    if (flushTimers[sessionId]) {
-      clearTimeout(flushTimers[sessionId]);
-      delete flushTimers[sessionId];
+    if (flushHandles[sessionId]) {
+      cancelFlush(flushHandles[sessionId]);
+      delete flushHandles[sessionId];
     }
     delete deltaBuffers[sessionId];
     set((s) => ({
@@ -147,11 +164,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   appendDelta: (sessionId, content) => {
     if (!deltaBuffers[sessionId]) deltaBuffers[sessionId] = [];
     deltaBuffers[sessionId].push(content);
-    if (!flushTimers[sessionId]) {
-      flushTimers[sessionId] = setTimeout(
-        () => flushBuffer(sessionId),
-        DELTA_BATCH_MS,
-      );
+    if (!flushHandles[sessionId]) {
+      flushHandles[sessionId] = scheduleFlush(() => {
+        delete flushHandles[sessionId];
+        flushBuffer(sessionId);
+      });
     }
   },
 
@@ -210,9 +227,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   clearSession: (sessionId) => {
     flushBuffer(sessionId);
     delete deltaBuffers[sessionId];
-    if (flushTimers[sessionId]) {
-      clearTimeout(flushTimers[sessionId]);
-      delete flushTimers[sessionId];
+    if (flushHandles[sessionId]) {
+      cancelFlush(flushHandles[sessionId]);
+      delete flushHandles[sessionId];
     }
     set((s) => {
       const m = { ...s.messagesPerSession };

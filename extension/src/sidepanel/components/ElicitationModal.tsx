@@ -1,5 +1,11 @@
 import { useState } from "react";
 import type { ElicitationRequest } from "../stores/chatStore";
+import { Dialog, DialogContent } from "../ui/Dialog";
+import { Button } from "../ui/Button";
+import { Input } from "../ui/Input";
+import { Label } from "../ui/Label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/Select";
+import { Switch } from "../ui/Switch";
 
 interface Props {
   request: ElicitationRequest;
@@ -16,7 +22,9 @@ interface SchemaProperty {
   default?: unknown;
 }
 
-function getProperties(schema: Record<string, unknown> | null | undefined): Record<string, SchemaProperty> {
+function getProperties(
+  schema: Record<string, unknown> | null | undefined,
+): Record<string, SchemaProperty> {
   if (!schema || typeof schema !== "object") return {};
   const props = (schema as { properties?: Record<string, SchemaProperty> }).properties;
   return props ?? {};
@@ -36,19 +44,25 @@ export function ElicitationModal({ request, onAccept, onDecline, onCancel }: Pro
 
   const setField = (k: string, v: unknown) => setValues((s) => ({ ...s, [k]: v }));
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    onAccept(values);
-  };
-
   return (
-    <div className="cb-modal-backdrop" onClick={onCancel}>
-      <div className="cb-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="cb-modal-title">{request.message || "Input requested"}</div>
-        {request.url && <div className="cb-modal-sub">URL: {request.url}</div>}
-        <form onSubmit={handleSubmit}>
+    <Dialog open onOpenChange={(o) => !o && onCancel()}>
+      <DialogContent title={request.message || "Input requested"}>
+        <form
+          className="space-y-3 p-5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            onAccept(values);
+          }}
+        >
+          {request.url && (
+            <div className="truncate text-[11px] text-[var(--color-text-dim)]">
+              URL: {request.url}
+            </div>
+          )}
           {fieldNames.length === 0 && (
-            <div className="cb-modal-sub">No additional fields required.</div>
+            <div className="text-[12px] text-[var(--color-text-muted)]">
+              No additional fields required.
+            </div>
           )}
           {fieldNames.map((name) => {
             const prop = properties[name];
@@ -56,55 +70,74 @@ export function ElicitationModal({ request, onAccept, onDecline, onCancel }: Pro
             const value = values[name] ?? "";
             if (prop.enum && prop.enum.length > 0) {
               return (
-                <label key={name} className="cb-field">
-                  <span>{label}</span>
-                  <select
+                <div key={name}>
+                  <Label>{label}</Label>
+                  <Select
                     value={String(value)}
-                    onChange={(e) => setField(name, e.target.value)}
+                    onValueChange={(v) => setField(name, v)}
                   >
-                    {prop.enum.map((opt) => (
-                      <option key={opt} value={opt}>
-                        {opt}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                    <SelectTrigger className="h-9 w-full">
+                      <SelectValue placeholder="Choose…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {prop.enum.map((opt) => (
+                        <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {prop.description && (
+                    <p className="mt-1 text-[11px] text-[var(--color-text-dim)]">
+                      {prop.description}
+                    </p>
+                  )}
+                </div>
               );
             }
             if (prop.type === "boolean") {
               return (
-                <label key={name} className="cb-field cb-field-row">
-                  <input
-                    type="checkbox"
-                    checked={!!value}
-                    onChange={(e) => setField(name, e.target.checked)}
-                  />
-                  <span>{label}</span>
-                </label>
+                <div key={name} className="flex items-center justify-between">
+                  <div>
+                    <Label>{label}</Label>
+                    {prop.description && (
+                      <p className="text-[11px] text-[var(--color-text-dim)]">
+                        {prop.description}
+                      </p>
+                    )}
+                  </div>
+                  <Switch checked={!!value} onCheckedChange={(v) => setField(name, v)} />
+                </div>
               );
             }
-            const inputType = prop.type === "number" || prop.type === "integer" ? "number" : "text";
+            const inputType =
+              prop.type === "number" || prop.type === "integer" ? "number" : "text";
             return (
-              <label key={name} className="cb-field">
-                <span>{label}</span>
-                <input
+              <div key={name}>
+                <Label>{label}</Label>
+                <Input
                   type={inputType}
                   value={String(value)}
                   onChange={(e) =>
-                    setField(name, inputType === "number" ? Number(e.target.value) : e.target.value)
+                    setField(
+                      name,
+                      inputType === "number" ? Number(e.target.value) : e.target.value,
+                    )
                   }
                 />
-                {prop.description && <small>{prop.description}</small>}
-              </label>
+                {prop.description && (
+                  <p className="mt-1 text-[11px] text-[var(--color-text-dim)]">
+                    {prop.description}
+                  </p>
+                )}
+              </div>
             );
           })}
-          <div className="cb-modal-actions">
-            <button type="button" className="cb-btn" onClick={onCancel}>Cancel</button>
-            <button type="button" className="cb-btn" onClick={onDecline}>Decline</button>
-            <button type="submit" className="cb-btn cb-btn--primary">Submit</button>
+          <div className="flex justify-end gap-2 pt-1">
+            <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>
+            <Button type="button" variant="outline" onClick={onDecline}>Decline</Button>
+            <Button type="submit" variant="primary">Submit</Button>
           </div>
         </form>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

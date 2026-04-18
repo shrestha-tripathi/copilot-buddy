@@ -50,13 +50,15 @@ func startTestServer(t *testing.T) (*httptest.Server, *services.CopilotService, 
 		t.Fatalf("storage.New: %v", err)
 	}
 
-	svc := services.NewCopilotService()
+	agents, _ := storage.NewAgentStore()
+	mcp, _ := storage.NewMCPStore()
+	svc := services.NewCopilotService(agents, mcp)
 	if err := svc.Start(context.Background()); err != nil {
 		t.Fatalf("svc.Start: %v", err)
 	}
 
 	mux := http.NewServeMux()
-	routers.Register(mux, svc, store)
+	routers.Register(mux, svc, store, agents, mcp)
 	srv := httptest.NewServer(mux)
 
 	cleanup := func() {

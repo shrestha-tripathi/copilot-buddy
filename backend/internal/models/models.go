@@ -10,14 +10,34 @@ import "time"
 // can show the session list and re-create the SDK session with the right
 // configuration.
 type Session struct {
-	ID            string    `json:"id"`
-	Name          string    `json:"name"`
-	NameSet       bool      `json:"name_set"`
-	Model         string    `json:"model"`
-	CWD           string    `json:"cwd"`
-	SystemMessage string    `json:"system_message,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID              string            `json:"id"`
+	Name            string            `json:"name"`
+	NameSet         bool              `json:"name_set"`
+	Model           string            `json:"model"`
+	ReasoningEffort string            `json:"reasoning_effort,omitempty"`
+	CWD             string            `json:"cwd"`
+	SystemMessage   string            `json:"system_message,omitempty"`
+	Agent           string            `json:"agent,omitempty"`
+	MCPServers      map[string]any    `json:"mcp_servers,omitempty"`
+	CreatedAt       time.Time         `json:"created_at"`
+	UpdatedAt       time.Time         `json:"updated_at"`
+}
+
+// CustomAgent is a user-defined agent persona.
+type CustomAgent struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Prompt      string         `json:"prompt"`
+	Tools       []string       `json:"tools,omitempty"`
+	MCPServers  map[string]any `json:"mcp_servers,omitempty"`
+	Infer       bool           `json:"infer,omitempty"`
+}
+
+// MCPServerEntry is one named MCP server config (opaque map — the SDK
+// validates shape; we just round-trip).
+type MCPServerEntry struct {
+	Name   string         `json:"name"`
+	Config map[string]any `json:"config"`
 }
 
 // Step represents a tool call or reasoning chunk surfaced to the UI as a
