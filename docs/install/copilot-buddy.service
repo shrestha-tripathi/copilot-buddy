@@ -1,0 +1,22 @@
+# Sample systemd user unit. Copy to:
+#   ~/.config/systemd/user/copilot-buddy.service
+# then:
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now copilot-buddy.service
+#   journalctl --user -u copilot-buddy -f
+#
+# Adjust ExecStart/--origins to your binary path and Chrome extension id.
+
+[Unit]
+Description=Copilot Buddy daemon (Go SDK wrapper for Copilot CLI)
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/copilot-buddy --port 8770 --origins chrome-extension://YOUR_EXTENSION_ID
+Restart=on-failure
+RestartSec=2
+Environment=COPILOT_BUDDY_HOME=%h/.copilot-buddy
+
+[Install]
+WantedBy=default.target

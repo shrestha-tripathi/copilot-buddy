@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Sample launchd user agent. Install at:
+    ~/Library/LaunchAgents/dev.copilot-buddy.plist
+  then:
+    launchctl bootstrap gui/$UID ~/Library/LaunchAgents/dev.copilot-buddy.plist
+    launchctl enable gui/$UID/dev.copilot-buddy
+
+  Edit the absolute path under <ProgramArguments> and the --origins value
+  to match your installed binary and Chrome extension id.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>dev.copilot-buddy</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/copilot-buddy</string>
+    <string>--port</string><string>8770</string>
+    <string>--origins</string>
+    <string>chrome-extension://YOUR_EXTENSION_ID</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/tmp/copilot-buddy.out.log</string>
+  <key>StandardErrorPath</key><string>/tmp/copilot-buddy.err.log</string>
+</dict>
+</plist>
