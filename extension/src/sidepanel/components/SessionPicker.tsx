@@ -23,8 +23,9 @@ export function SessionPicker() {
     sessionsApi
       .list(api)
       .then((res) => {
-        setSessions(res.sessions);
-        if (!activeId && res.sessions[0]) setActive(res.sessions[0].id);
+        const list = res?.sessions ?? [];
+        setSessions(list);
+        if (!activeId && list[0]) setActive(list[0].id);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));

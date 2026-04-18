@@ -110,7 +110,7 @@ func (r *router) listSessions(w http.ResponseWriter, _ *http.Request) {
 	if sessions == nil {
 		sessions = []*models.Session{}
 	}
-	writeJSON(w, http.StatusOK, sessions)
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
 }
 
 func (r *router) getSession(w http.ResponseWriter, req *http.Request) {
